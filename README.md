@@ -176,10 +176,10 @@ No cloud sync, no accounts, no telemetry in v0.1.
 ## Roadmap
 
 - [x] v0.1 — local vault, CLI, MCP server, relevance scoring
-- [ ] v0.2 — browser extension for passive capture from claude.ai / ChatGPT
+<!-- - [ ] v0.2 — browser extension for passive capture from claude.ai / ChatGPT
 - [ ] v0.3 — React dashboard (visualize vault, edit/delete memories, see what gets injected)
 - [ ] v0.4 — optional cloud sync via Supabase (opt-in, user-controlled)
-- [ ] v1.0 — data marketplace (opt-in sharing of anonymized memory segments)
+- [ ] v1.0 — data marketplace (opt-in sharing of anonymized memory segments) -->
 
 ---
 
