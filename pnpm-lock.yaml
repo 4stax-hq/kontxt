@@ -64,19 +64,19 @@ importers:
         version: link:../core
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
-        version: 1.27.1(zod@4.3.6)
+        version: 1.27.1(zod@3.25.76)
       better-sqlite3:
         specifier: ^9.4.0
         version: 9.6.0
       openai:
         specifier: ^4.0.0
-        version: 4.104.0(zod@4.3.6)
+        version: 4.104.0(zod@3.25.76)
       uuid:
         specifier: ^9.0.0
         version: 9.0.1
       zod:
-        specifier: ^4.3.6
-        version: 4.3.6
+        specifier: ^3.22.0
+        version: 3.25.76
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.0
@@ -956,9 +956,6 @@ packages:
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
-  zod@4.3.6:
-    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
-
 snapshots:
 
   '@esbuild/aix-ppc64@0.27.4':
@@ -1043,7 +1040,7 @@ snapshots:
     dependencies:
       hono: 4.12.9
 
-  '@modelcontextprotocol/sdk@1.27.1(zod@4.3.6)':
+  '@modelcontextprotocol/sdk@1.27.1(zod@3.25.76)':
     dependencies:
       '@hono/node-server': 1.19.11(hono@4.12.9)
       ajv: 8.18.0
@@ -1060,8 +1057,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.3.6
-      zod-to-json-schema: 3.25.1(zod@4.3.6)
+      zod: 3.25.76
+      zod-to-json-schema: 3.25.1(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
 
@@ -1525,20 +1522,6 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
-  openai@4.104.0(zod@4.3.6):
-    dependencies:
-      '@types/node': 18.19.130
-      '@types/node-fetch': 2.6.13
-      abort-controller: 3.0.0
-      agentkeepalive: 4.6.0
-      form-data-encoder: 1.7.2
-      formdata-node: 4.4.1
-      node-fetch: 2.7.0
-    optionalDependencies:
-      zod: 4.3.6
-    transitivePeerDependencies:
-      - encoding
-
   ora@8.2.0:
     dependencies:
       chalk: 5.6.2
@@ -1791,11 +1774,8 @@ snapshots:
 
   wrappy@1.0.2: {}
 
-  zod-to-json-schema@3.25.1(zod@4.3.6):
+  zod-to-json-schema@3.25.1(zod@3.25.76):
     dependencies:
-      zod: 4.3.6
+      zod: 3.25.76
 
-  zod@3.25.76:
-    optional: true
-
-  zod@4.3.6: {}
+  zod@3.25.76: {}

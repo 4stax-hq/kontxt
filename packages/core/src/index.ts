@@ -29,3 +29,6 @@ export interface SearchResult {
   memory: Memory
   score: number
 }
+
+export { extractMemoriesFromTranscript, getOllamaInstructModel } from './extractor.js'
+export type { ExtractedMemory } from './extractor.js'

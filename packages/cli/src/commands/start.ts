@@ -7,36 +7,47 @@ import os from 'os'
 const PID_FILE = path.join(os.homedir(), '.mnemix', 'server.pid')
 const LOG_FILE = path.join(os.homedir(), '.mnemix', 'server.log')
 
+function findTsx(): string | null {
+  const candidates = [
+    path.join(process.cwd(), 'node_modules/.bin/tsx'),
+    path.join(process.cwd(), 'packages/mcp-server/node_modules/.bin/tsx'),
+  ]
+  return candidates.find(p => fs.existsSync(p)) || null
+}
+
 function getServerPath(): string {
-  const local = path.join(process.cwd(), 'packages/mcp-server/dist/server.js')
+  const local = path.join(process.cwd(), 'packages/mcp-server/src/server.ts')
   if (fs.existsSync(local)) return local
-  // when installed globally via npm, resolve relative to this file
-  return path.join(path.dirname(process.execPath), '../lib/node_modules/mnemix/packages/mcp-server/dist/server.js')
+  return path.join(__dirname, '../../../mcp-server/src/server.ts')
 }
 
 export async function startCommand() {
   if (fs.existsSync(PID_FILE)) {
     const pid = fs.readFileSync(PID_FILE, 'utf-8').trim()
     try {
-      process.kill(Number(pid), 0) // check if process exists
+      process.kill(Number(pid), 0)
       console.log(chalk.yellow('  mnemix server already running (pid ' + pid + ')'))
-      console.log(chalk.gray('  mnemix stop — to stop it'))
       return
     } catch {
-      // pid file stale, clean it up
       fs.unlinkSync(PID_FILE)
     }
   }
 
   const serverPath = getServerPath()
+  const tsx = findTsx()
+
+  if (!tsx) {
+    console.log(chalk.red('  tsx not found — run pnpm install first'))
+    return
+  }
+
   if (!fs.existsSync(serverPath)) {
     console.log(chalk.red('  server not found at: ' + serverPath))
-    console.log(chalk.gray('  run pnpm build first'))
     return
   }
 
   const log = fs.openSync(LOG_FILE, 'a')
-  const child = spawn(process.execPath, [serverPath], {
+  const child = spawn(tsx, [serverPath], {
     detached: true,
     stdio: ['ignore', log, log],
   })
