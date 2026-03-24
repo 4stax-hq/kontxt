@@ -7,6 +7,9 @@ import { listCommand } from './commands/list.js'
 import { deleteCommand } from './commands/delete.js'
 import { editCommand } from './commands/edit.js'
 import { extractCommand } from './commands/extract.js'
+import { startCommand } from './commands/start.js'
+import { stopCommand } from './commands/stop.js'
+import { statusCommand } from './commands/status.js'
 
 const program = new Command()
 
@@ -58,11 +61,26 @@ program
   .action(extractCommand)
 
 program
+  .command('start')
+  .description('Start the MCP server as a background daemon')
+  .action(startCommand)
+
+program
+  .command('stop')
+  .description('Stop the background MCP server')
+  .action(stopCommand)
+
+program
+  .command('status')
+  .description('Show server status, embedding tier, and vault stats')
+  .action(statusCommand)
+
+program
   .command('serve')
-  .description('Start the MCP server for Cursor/Claude integration')
+  .description('Start MCP server in foreground (for debugging)')
   .action(() => {
-    console.log('Starting mnemix MCP server...')
-    require('../../../packages/mcp-server/dist/server.js')
+    const { createServer } = require('../../../packages/mcp-server/dist/server.js')
+    createServer()
   })
 
 program.parse()
