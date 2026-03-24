@@ -95,3 +95,45 @@ function deserializeRow(row: any): Memory {
     related_ids: JSON.parse(row.related_ids || '[]'),
   }
 }
+
+export function findSimilarMemory(
+  db: Database.Database,
+  embedding: number[],
+  threshold = 0.92
+): Memory | null {
+  const all = getAllMemories(db)
+  if (all.length === 0) return null
+
+  let best: Memory | null = null
+  let bestScore = 0
+
+  for (const memory of all) {
+    if (memory.embedding.length === 0) continue
+    const dot = embedding.reduce((sum, v, i) => sum + v * (memory.embedding[i] || 0), 0)
+    const magA = Math.sqrt(embedding.reduce((s, v) => s + v * v, 0))
+    const magB = Math.sqrt(memory.embedding.reduce((s, v) => s + v * v, 0))
+    const sim = magA && magB ? dot / (magA * magB) : 0
+    if (sim > bestScore) { bestScore = sim; best = memory }
+  }
+
+  return bestScore >= threshold ? best : null
+}
+
+export function updateMemoryContent(
+  db: Database.Database,
+  id: string,
+  content: string,
+  embedding: number[]
+): void {
+  db.prepare(`
+    UPDATE memories
+    SET content = ?, summary = ?, embedding = ?, accessed_at = ?
+    WHERE id = ?
+  `).run(
+    content,
+    content.slice(0, 100),
+    Buffer.from(new Float32Array(embedding).buffer),
+    new Date().toISOString(),
+    id
+  )
+}
