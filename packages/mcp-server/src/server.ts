@@ -1,8 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { getDb, getAllMemories, insertMemory, incrementAccess } from '../../cli/src/vault/db.js'
-import { embedText, cosineSimilarity, scoreMemory } from '../../cli/src/vault/embed.js'
+import { getDb, getAllMemories, insertMemory, incrementAccess } from './vault/db.js'
+import { embedText, cosineSimilarity, scoreMemory } from './vault/embed.js'
 import { v4 as uuid } from 'uuid'
 import { MemoryType } from '@mnemix/core'
 
