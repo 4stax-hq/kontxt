@@ -4,6 +4,8 @@ import { initCommand } from './commands/init.js'
 import { addCommand } from './commands/add.js'
 import { searchCommand } from './commands/search.js'
 import { listCommand } from './commands/list.js'
+import { deleteCommand } from './commands/delete.js'
+import { editCommand } from './commands/edit.js'
 
 const program = new Command()
 
@@ -36,6 +38,16 @@ program
   .description('List all memories')
   .option('-p, --project <project>', 'filter by project')
   .action(listCommand)
+
+program
+  .command('delete <id>')
+  .description('Delete a memory by id (partial id ok)')
+  .action(deleteCommand)
+
+program
+  .command('edit <id> <content>')
+  .description('Edit a memory content by id (partial id ok)')
+  .action(editCommand)
 
 program
   .command('serve')

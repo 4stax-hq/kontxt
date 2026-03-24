@@ -188,7 +188,3 @@ No cloud sync, no accounts, no telemetry in v0.1.
 PRs welcome. The core logic is in `packages/cli/src/vault/` — `db.ts` for storage and `embed.ts` for scoring. The MCP server in `packages/mcp-server/src/server.ts` is the integration layer.
 
 ---
-
-## License
-
-MIT
