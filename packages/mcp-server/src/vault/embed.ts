@@ -10,7 +10,25 @@ function getConfig(): any {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) } catch { return {} }
 }
 
-// Tier 1: OpenAI
+async function getBestEmbedModel(): Promise<string> {
+  try {
+    const res = await fetch('http://localhost:11434/api/tags', {
+      signal: AbortSignal.timeout(1000)
+    })
+    if (!res.ok) return 'nomic-embed-text'
+    const data = await res.json() as { models: { name: string }[] }
+    const models = data.models.map(m => m.name)
+    const embedPreference = ['nomic-embed-text', 'mxbai-embed-large', 'all-minilm', 'bge-']
+    for (const pref of embedPreference) {
+      const match = models.find(m => m.toLowerCase().includes(pref))
+      if (match) return match
+    }
+    return models[0] || 'nomic-embed-text'
+  } catch {
+    return 'nomic-embed-text'
+  }
+}
+
 async function embedOpenAI(text: string, apiKey: string): Promise<number[]> {
   const openai = new OpenAI({ apiKey })
   const res = await openai.embeddings.create({
@@ -20,36 +38,36 @@ async function embedOpenAI(text: string, apiKey: string): Promise<number[]> {
   return res.data[0].embedding
 }
 
-// Tier 2: Ollama (auto-detected if running locally)
 async function isOllamaRunning(): Promise<boolean> {
   try {
-    const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(1000) })
+    const res = await fetch('http://localhost:11434/api/tags', {
+      signal: AbortSignal.timeout(1000)
+    })
     return res.ok
   } catch { return false }
 }
 
 async function embedOllama(text: string): Promise<number[]> {
+  const model = await getBestEmbedModel()
   const res = await fetch('http://localhost:11434/api/embeddings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'nomic-embed-text', prompt: text }),
+    body: JSON.stringify({ model, prompt: text }),
   })
   if (!res.ok) throw new Error('Ollama embedding failed')
   const data = await res.json() as { embedding: number[] }
   return data.embedding
 }
 
-// Tier 3: pseudo-embedding (deterministic, local, no deps)
 function pseudoEmbed(text: string): number[] {
   const dim = 256
   const vec = new Array(dim).fill(0)
   const words = text.toLowerCase().split(/\s+/)
-  // word-level hashing gives slightly better signal than char-level
   for (const word of words) {
     let hash = 5381
     for (let i = 0; i < word.length; i++) {
       hash = ((hash << 5) + hash) + word.charCodeAt(i)
-      hash = hash & hash // 32-bit int
+      hash = hash & hash
     }
     vec[Math.abs(hash) % dim] += 1
   }
@@ -63,31 +81,25 @@ let resolvedTier: EmbedTier | null = null
 export async function embedText(text: string): Promise<number[]> {
   const config = getConfig()
 
-  // Tier 1: OpenAI key configured
   if (config.openai_api_key) {
     try {
       const result = await embedOpenAI(text, config.openai_api_key)
-      if (resolvedTier !== 'openai') { resolvedTier = 'openai' }
+      resolvedTier = 'openai'
       return result
-    } catch (e: any) {
-      // bad key or network — fall through
+    } catch {
       console.error('  OpenAI embedding failed, falling back...')
     }
   }
 
-  // Tier 2: Ollama running locally
   if (await isOllamaRunning()) {
     try {
       const result = await embedOllama(text)
-      if (resolvedTier !== 'ollama') { resolvedTier = 'ollama' }
+      resolvedTier = 'ollama'
       return result
-    } catch {
-      // ollama running but model not pulled — fall through
-    }
+    } catch {}
   }
 
-  // Tier 3: pseudo
-  if (resolvedTier !== 'pseudo') { resolvedTier = 'pseudo' }
+  resolvedTier = 'pseudo'
   return pseudoEmbed(text)
 }
 
@@ -97,7 +109,6 @@ export function getActiveTier(): EmbedTier {
 
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length === 0 || b.length === 0) return 0
-  // handle dimension mismatch between tiers
   const len = Math.min(a.length, b.length)
   const dot = a.slice(0, len).reduce((sum, ai, i) => sum + ai * b[i], 0)
   const magA = Math.sqrt(a.reduce((s, v) => s + v * v, 0))

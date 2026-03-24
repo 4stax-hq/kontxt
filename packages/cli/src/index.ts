@@ -6,6 +6,7 @@ import { searchCommand } from './commands/search.js'
 import { listCommand } from './commands/list.js'
 import { deleteCommand } from './commands/delete.js'
 import { editCommand } from './commands/edit.js'
+import { extractCommand } from './commands/extract.js'
 
 const program = new Command()
 
@@ -48,6 +49,13 @@ program
   .command('edit <id> <content>')
   .description('Edit a memory content by id (partial id ok)')
   .action(editCommand)
+
+program
+  .command('extract')
+  .description('Extract and store memories from a conversation transcript')
+  .option('-f, --file <path>', 'path to transcript file (or pipe via stdin)')
+  .option('-p, --project <project>', 'associate extracted memories with a project')
+  .action(extractCommand)
 
 program
   .command('serve')
