@@ -10,6 +10,7 @@ import { extractCommand } from './commands/extract.js'
 import { startCommand } from './commands/start.js'
 import { stopCommand } from './commands/stop.js'
 import { statusCommand } from './commands/status.js'
+import { scanCommand } from './commands/scan.js'
 
 const program = new Command()
 
@@ -61,6 +62,13 @@ program
   .action(extractCommand)
 
 program
+  .command('scan')
+  .description('Scan a project directory and extract facts into the vault')
+  .option('-d, --dir <path>', 'directory to scan (defaults to current directory)')
+  .option('-p, --project <name>', 'project name to tag memories with')
+  .action(scanCommand)
+
+program
   .command('start')
   .description('Start the MCP server as a background daemon')
   .action(startCommand)
@@ -79,8 +87,7 @@ program
   .command('serve')
   .description('Start MCP server in foreground (for debugging)')
   .action(() => {
-    const { createServer } = require('../../../packages/mcp-server/dist/server.js')
-    createServer()
+    console.log('Starting mnemix MCP server...')
   })
 
 program.parse()

@@ -7,8 +7,9 @@ import path from 'path'
 import os from 'os'
 import { getDb, getAllMemories, insertMemory, incrementAccess, findSimilarMemory, updateMemoryContent } from './vault/db.js'
 import { embedText, cosineSimilarity, scoreMemory } from './vault/embed.js'
-import { extractMemoriesFromTranscript } from '@mnemix/core'
-import { MemoryType } from '@mnemix/core'
+import { extractMemoriesFromTranscript } from '../../core/src/extractor.js'
+
+type MemoryType = 'preference' | 'fact' | 'project' | 'decision' | 'skill' | 'episodic'
 
 const CONFIG_PATH = path.join(os.homedir(), '.mnemix', 'config.json')
 
@@ -22,7 +23,6 @@ const server = new McpServer({
   version: '0.1.0',
 })
 
-// Tool 1: get relevant context — smarter, pre-digested
 server.tool(
   'get_relevant_context',
   'Retrieve memories from the user vault relevant to the current task. Call this at the start of any conversation or when you need context about the user.',
@@ -54,11 +54,10 @@ server.tool(
 
     if (scored.length === 0) {
       return {
-        content: [{ type: 'text', text: 'No relevant memories found. The user has not stored any context yet.' }]
+        content: [{ type: 'text' as const, text: 'No relevant memories found.' }]
       }
     }
 
-    // group by type for a more useful pre-digested format
     const byType: Record<string, string[]> = {}
     for (const { memory } of scored) {
       if (!byType[memory.type]) byType[memory.type] = []
@@ -66,22 +65,20 @@ server.tool(
     }
 
     const sections = Object.entries(byType)
-      .map(([type, items]) => {
-        const label = type.toUpperCase()
-        return label + ':\n' + items.map(i => '  - ' + i).join('\n')
-      })
+      .map(([type, items]) =>
+        type.toUpperCase() + ':\n' + items.map(i => '  - ' + i).join('\n')
+      )
       .join('\n\n')
 
     return {
       content: [{
-        type: 'text',
-        text: 'Relevant context from user memory vault:\n\n' + sections + '\n\nUse this to personalize your response. Do not mention that you retrieved this from a memory system unless asked.'
+        type: 'text' as const,
+        text: 'Relevant context from user memory vault:\n\n' + sections + '\n\nUse this to personalize your response. Do not mention the memory system unless asked.'
       }]
     }
   }
 )
 
-// Tool 2: store a single memory
 server.tool(
   'store_memory',
   'Save an important fact about the user to long-term memory. Use this when the user shares preferences, makes decisions, mentions projects, or reveals skills.',
@@ -98,7 +95,7 @@ server.tool(
     if (duplicate) {
       updateMemoryContent(db, duplicate.id, content, embedding)
       return {
-        content: [{ type: 'text', text: 'Updated existing memory: "' + content + '"' }]
+        content: [{ type: 'text' as const, text: 'Updated existing memory: "' + content + '"' }]
       }
     }
 
@@ -106,7 +103,7 @@ server.tool(
     insertMemory(db, {
       id: uuid(),
       content,
-      summary: content.slice( 100),
+      summary: content.slice(0, 100),
       source: 'ai-captured',
       type: type as MemoryType,
       embedding,
@@ -121,12 +118,11 @@ server.tool(
     })
 
     return {
-      content: [{ type: 'text', text: 'Stored: "' + content + '"' }]
+      content: [{ type: 'text' as const, text: 'Stored: "' + content + '"' }]
     }
   }
 )
 
-// Tool 3: auto-extract from full conversation — the key new tool
 server.tool(
   'store_conversation_summary',
   'Extract and store durable facts from a full conversation transcript. Call this at the END of every conversation with the complete conversation text.',
@@ -140,7 +136,7 @@ server.tool(
 
     if (!extracted.length) {
       return {
-        content: [{ type: 'text', text: 'No durable facts found in conversation.' }]
+        content: [{ type: 'text' as const, text: 'No durable facts found in conversation.' }]
       }
     }
 
@@ -182,14 +178,13 @@ server.tool(
 
     return {
       content: [{
-        type: 'text',
+        type: 'text' as const,
         text: 'Memory update complete: ' + stored + ' new facts stored, ' + updated + ' updated.'
       }]
     }
   }
 )
 
-// Tool 4: get user profile
 server.tool(
   'get_user_profile',
   'Get a complete summary of everything known about the user — skills, preferences, ongoing projects, decisions.',
@@ -200,7 +195,7 @@ server.tool(
 
     if (!memories.length) {
       return {
-        content: [{ type: 'text', text: 'No profile data yet. The vault is empty.' }]
+        content: [{ type: 'text' as const, text: 'No profile data yet. The vault is empty.' }]
       }
     }
 
@@ -217,7 +212,7 @@ server.tool(
       .join('\n\n')
 
     return {
-      content: [{ type: 'text', text: profile }]
+      content: [{ type: 'text' as const, text: profile }]
     }
   }
 )

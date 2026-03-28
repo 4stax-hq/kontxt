@@ -9,7 +9,7 @@ const LOG_FILE = path.join(os.homedir(), '.mnemix', 'server.log')
 
 function findTsx(): string | null {
   const candidates = [
-    path.join(process.cwd(), 'node_modules/.bin/tsx'),
+    path.join(process.cwd(), 'packages/mcp-server/node_modules/.bin/tsx'),
     path.join(process.cwd(), 'packages/mcp-server/node_modules/.bin/tsx'),
   ]
   return candidates.find(p => fs.existsSync(p)) || null
