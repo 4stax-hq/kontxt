@@ -2,6 +2,10 @@
 
 A local-first memory layer for AI tools. Persistent, semantically-searchable context across sessions and providers via MCP.
 
+**npm:** [`@4stax/kontxt`](https://www.npmjs.com/package/@4stax/kontxt) — the unscoped name `kontxt` is already taken on npm.
+
+After a global install, the CLI on your PATH is still **`kontxt`**; without that, use **`npx -y @4stax/kontxt …`**.
+
 ---
 
 ## What it does
@@ -52,17 +56,23 @@ bin/kontxt.js               shim → dist/cli/index.js
 ## Install
 
 ```bash
-npx kontxt init
+# One-off (no global install)
+npx -y @4stax/kontxt init
 
 # Optional: set OpenAI key for higher-quality embeddings
-npx kontxt init --key sk-...
+npx -y @4stax/kontxt init --key sk-...
+
+# Optional: install globally so the binary is just `kontxt`
+npm install -g @4stax/kontxt
 ```
 
-`kontxt init` creates the local vault (`~/.kontxt/vault.db`) and auto-writes MCP config for Cursor and Claude Desktop (when those configs exist).
+`init` creates the local vault (`~/.kontxt/vault.db`) and writes MCP config for Cursor and Claude Desktop when those config paths exist. New configs use `npx -y @4stax/kontxt serve` so MCP works without a global install.
 
 ---
 
 ## CLI
+
+With a global install (`npm install -g @4stax/kontxt`), run `kontxt …` as below. Otherwise prefix with `npx -y @4stax/kontxt` (for example `npx -y @4stax/kontxt search "…"`).
 
 ```bash
 # Initialize vault + MCP config
@@ -122,12 +132,14 @@ kontxt serve
 {
   "mcpServers": {
     "kontxt": {
-      "command": "kontxt",
-      "args": ["serve"]
+      "command": "npx",
+      "args": ["-y", "@4stax/kontxt", "serve"]
     }
   }
 }
 ```
+
+If you use a **global** install, you may use `"command": "kontxt", "args": ["serve"]` instead.
 
 ## Connecting to Claude Desktop
 
@@ -137,8 +149,8 @@ kontxt serve
 {
   "mcpServers": {
     "kontxt": {
-      "command": "kontxt",
-      "args": ["serve"]
+      "command": "npx",
+      "args": ["-y", "@4stax/kontxt", "serve"]
     }
   }
 }

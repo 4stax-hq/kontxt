@@ -1,5 +1,5 @@
 {
-  "name": "kontxt",
+  "name": "@4stax/kontxt",
   "version": "0.1.0",
   "description": "Your AI memory layer. Works everywhere.",
   "license": "MIT",
@@ -14,6 +14,9 @@
     "README.md",
     "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },

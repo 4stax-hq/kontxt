@@ -45,6 +45,17 @@ function safeReadJson(filePath: string): any {
   }
 }
 
+function readPackageName(): string {
+  const pkgPath = path.join(__dirname, '..', '..', '..', 'package.json')
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { name?: string }
+    if (pkg.name && typeof pkg.name === 'string') return pkg.name
+  } catch {
+    // dev / unexpected layout
+  }
+  return '@4stax/kontxt'
+}
+
 function upsertMcpServerConfig(mcpConfigPath: string, serverName: string, serverCommand: string, serverArgs: string[]) {
   const dir = path.dirname(mcpConfigPath)
   fs.mkdirSync(dir, { recursive: true })
@@ -108,10 +119,10 @@ export async function initCommand(options: { key?: string }) {
       : chalk.yellow
   console.log(tierColor(`  ✓ embeddings: ${tier}`))
 
-  // MCP config for Cursor and Claude Desktop.
-  // Critical: point clients at the installed `kontxt` command, not a repo path.
+  // MCP: use npx so Cursor / Claude work without a global install (required for scoped npm names).
   const mcpServerName = 'kontxt'
-  const mcpServerEntry = { command: 'kontxt', args: ['serve'] }
+  const npmPackageName = readPackageName()
+  const mcpServerEntry = { command: 'npx', args: ['-y', npmPackageName, 'serve'] }
 
   const cursorMcpPath = path.join(os.homedir(), '.cursor', 'mcp.json')
   const claudeMcpPath = path.join(
@@ -147,10 +158,12 @@ export async function initCommand(options: { key?: string }) {
   } catch {}
 
   console.log(chalk.cyan('\n  commands:'))
-  console.log(chalk.gray('  kontxt add "..."       — store a memory'))
-  console.log(chalk.gray('  kontxt search "..."    — semantic search'))
-  console.log(chalk.gray('  kontxt list            — browse vault'))
-  console.log(chalk.gray('  kontxt start           — start MCP server'))
-  console.log(chalk.gray('  kontxt status          — show vault + embeddings'))
-  console.log(chalk.gray('  kontxt init --key sk-  — set OpenAI key\n'))
+  console.log(chalk.gray(`  npx -y ${npmPackageName} add "..."` + '       — store a memory'))
+  console.log(chalk.gray(`  npx -y ${npmPackageName} search "..."` + '    — semantic search'))
+  console.log(chalk.gray(`  npx -y ${npmPackageName} list` + '            — browse vault'))
+  console.log(chalk.gray(`  npx -y ${npmPackageName} start` + '           — start MCP server'))
+  console.log(chalk.gray(`  npx -y ${npmPackageName} status` + '          — show vault + embeddings'))
+  console.log(
+    chalk.gray(`  npm install -g ${npmPackageName}` + '  — then use plain `kontxt …` on PATH\n')
+  )
 }
