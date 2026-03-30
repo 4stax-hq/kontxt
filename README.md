@@ -21,21 +21,22 @@ AI:   already knows your stack.
 ```
 ~/.kontxt/vault.db         SQLite database, lives on your machine
        │
-       ├── memories         content, embeddings, type, tags, project, scores
+       ├── memories         content, embeddings, embedding_tier, type, tags, project, scores
        └── config.json      API key, settings
 
-packages/
-├── core/                   shared TypeScript types
-├── cli/                    command-line interface + vault logic
-│   └── src/
-│       ├── commands/       init, add, search, list, edit, delete
-│       └── vault/
-│           ├── db.ts       SQLite via better-sqlite3
-│           └── embed.ts    embeddings + scoring
-└── mcp-server/
-    └── src/
-        ├── server.ts       MCP server entry point
-        └── vault/          db.ts, embed.ts
+src/
+├── cli/
+│   ├── index.ts            Commander entry (kontxt serve loads MCP inline)
+│   └── commands/           init, add, search, list, edit, delete, capture, …
+├── mcp/server.ts           MCP tools + prompts (stdio)
+├── vault/
+│   ├── db.ts               SQLite via better-sqlite3
+│   └── embed.ts            embedding providers + relevance scoring
+├── types.ts
+└── extractor.ts            transcript → durable facts (OpenAI or Ollama)
+
+dist/                       compiled output (from npm install / publish, not committed)
+bin/kontxt.js               shim → dist/cli/index.js
 ```
 
 ---
@@ -43,7 +44,8 @@ packages/
 ## Requirements
 
 - Node.js >= 18
-- OpenAI API key (optional — embeddings prefer OpenAI when set)
+- OpenAI API key (optional — used first when set in `~/.kontxt/config.json`)
+- Offline semantic search works without a key via **Transformers.js** (`all-MiniLM-L6-v2`), with models cached under `~/.kontxt/models` after the first run
 
 ---
 
@@ -161,11 +163,13 @@ Recency uses exponential decay over 30 days. Frequency is log-scaled.
 
 Everything stays local. Single SQLite file at `~/.kontxt/vault.db`. No telemetry. No accounts. OpenAI key only used for `text-embedding-3-small` calls if provided.
 
-### Embedding backend troubleshooting
-- If OpenAI key is set via `kontxt init --key`, embeddings prefer OpenAI.
-- If Ollama is running locally, embeddings will prefer Ollama.
-- If Transformers.js is available, embeddings will use Transformers.js offline.
-- Otherwise, kontxt falls back to a lightweight pseudo-embedding mode.
+### Embedding backends (order)
+1. **OpenAI** — `text-embedding-3-small` when `openai_api_key` is set (about US $0.00002 per call at typical usage).
+2. **Transformers.js** — `Xenova/all-MiniLM-L6-v2` in-process, no API key; first run downloads the model once.
+3. **Ollama** — local embeddings if `ollama serve` is running and an embed model is available.
+4. **Pseudo** — hashed bag-of-words fallback only when nothing else works; not comparable across tiers with real embeddings.
+
+Semantic search only compares memories stored in the **same** `embedding_tier` as the current query, so switching providers does not produce misleading cosine scores against old vectors.
 
 ---
 
@@ -180,7 +184,7 @@ Everything stays local. Single SQLite file at `~/.kontxt/vault.db`. No telemetry
 
 ## Contributing
 
-Core logic in `packages/cli/src/vault/` — `db.ts` for storage, `embed.ts` for scoring. MCP integration in `packages/mcp-server/src/server.ts`.
+Core logic: `src/vault/db.ts` (storage), `src/vault/embed.ts` (embeddings + scoring), `src/mcp/server.ts` (MCP).
 
 ---
 

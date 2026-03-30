@@ -1,31 +1,43 @@
 {
   "name": "kontxt",
   "version": "0.1.0",
+  "description": "Your AI memory layer. Works everywhere.",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/cli/index.js",
   "bin": {
     "kontxt": "./bin/kontxt.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build:core": "tsc -p packages/core/tsconfig.json",
-    "build:cli": "tsc -p packages/cli/tsconfig.json",
-    "build:mcp-server": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p packages/mcp-server/tsconfig.json",
-    "build": "npm run build:core && npm run build:mcp-server && npm run build:cli",
-    "prepare": "npm run build"
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx src/cli/index.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@xenova/transformers": "^2.17.2",
     "better-sqlite3": "^9.4.0",
-    "chalk": "^5.3.0",
+    "chalk": "^4.1.2",
     "commander": "^12.0.0",
     "openai": "^4.0.0",
-    "ora": "^8.0.0",
+    "ora": "^5.4.1",
     "uuid": "^9.0.0",
-    "tsx": "^4.21.0",
-    "zod": "^3.22.0",
-    "typescript": "^5.4.0"
+    "zod": "^3.22.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^20.0.0",
     "@types/uuid": "^9.0.0",
-    "@types/node": "^20.0.0"
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.0"
   }
 }
