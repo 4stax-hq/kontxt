@@ -43,51 +43,44 @@ packages/
 ## Requirements
 
 - Node.js >= 18
-- pnpm
-- OpenAI API key (optional — falls back to local pseudo-embeddings)
+- OpenAI API key (optional — embeddings prefer OpenAI when set)
 
 ---
 
 ## Install
 
 ```bash
-git clone https://github.com/4stax-hq/kontxt.git
-cd kontxt
-pnpm install
-pnpm build
+npx kontxt init
+
+# Optional: set OpenAI key for higher-quality embeddings
+npx kontxt init --key sk-...
 ```
 
-If `better-sqlite3` fails:
-
-```bash
-cd node_modules/.pnpm/better-sqlite3@9.6.0/node_modules/better-sqlite3
-npm run build-release
-cd -
-```
+`kontxt init` creates the local vault (`~/.kontxt/vault.db`) and auto-writes MCP config for Cursor and Claude Desktop (when those configs exist).
 
 ---
 
 ## CLI
 
 ```bash
-# Initialize vault
-node packages/cli/dist/index.js init
-node packages/cli/dist/index.js init --key sk-...
+# Initialize vault + MCP config
+kontxt init
+kontxt init --key sk-...
 
-# Add memories
-node packages/cli/dist/index.js add "I prefer JWT with 7-day expiry"
-node packages/cli/dist/index.js add "this project uses Supabase" --type project --project my-app
-node packages/cli/dist/index.js add "I know FastAPI, React, TypeScript" --type skill
+# Add + search
+kontxt add "I prefer JWT with 7-day expiry"
+kontxt search "what stack am I using?" --limit 3
 
-# Search
-node packages/cli/dist/index.js search "auth preferences"
-node packages/cli/dist/index.js search "what stack am I using" --limit 3
+# Capture from a transcript (stdin or file)
+cat conversation.txt | kontxt capture --project my-app
+kontxt capture --file conversation.txt
 
-# Manage
-node packages/cli/dist/index.js list
-node packages/cli/dist/index.js list --project my-app
-node packages/cli/dist/index.js edit <id>
-node packages/cli/dist/index.js delete <id>
+# Start MCP server + inspect
+kontxt start
+kontxt status
+
+# Cleanup
+kontxt vacuum
 ```
 
 **Memory types:** `fact` `preference` `project` `decision` `skill` `episodic`
@@ -99,14 +92,23 @@ node packages/cli/dist/index.js delete <id>
 | Tool | Description |
 |------|-------------|
 | `get_relevant_context` | Semantic search, returns top-k scored memories |
+| `search_memories` | Semantic search, returns top-k scored memories (with ids/scores) |
+| `list_memories` | List memories from the vault (optionally filtered by project) |
+| `delete_memory` | Delete a memory by id (partial id ok) |
+| `auto_capture` | Extract durable memories from a transcript and store them |
 | `store_memory` | Write a memory from inside a conversation |
 | `store_conversation_summary` | Summarize and store a full conversation |
 | `get_user_profile` | All memories grouped by type |
-| `auto_capture` | Passively detect and store significant context |
 
 ```bash
-node packages/mcp-server/dist/server.js
+kontxt serve
 ```
+
+---
+
+## Prompt Templates
+
+- `kontxt_context` | Returns the most relevant memories for a given `query` (args: `query`, optional `limit`, optional `project`)
 
 ---
 
@@ -118,8 +120,8 @@ node packages/mcp-server/dist/server.js
 {
   "mcpServers": {
     "kontxt": {
-      "command": "node",
-      "args": ["/absolute/path/to/kontxt/packages/mcp-server/dist/server.js"]
+      "command": "kontxt",
+      "args": ["serve"]
     }
   }
 }
@@ -133,8 +135,8 @@ node packages/mcp-server/dist/server.js
 {
   "mcpServers": {
     "kontxt": {
-      "command": "node",
-      "args": ["/absolute/path/to/kontxt/packages/mcp-server/dist/server.js"]
+      "command": "kontxt",
+      "args": ["serve"]
     }
   }
 }
@@ -158,6 +160,12 @@ Recency uses exponential decay over 30 days. Frequency is log-scaled.
 ## Data
 
 Everything stays local. Single SQLite file at `~/.kontxt/vault.db`. No telemetry. No accounts. OpenAI key only used for `text-embedding-3-small` calls if provided.
+
+### Embedding backend troubleshooting
+- If OpenAI key is set via `kontxt init --key`, embeddings prefer OpenAI.
+- If Ollama is running locally, embeddings will prefer Ollama.
+- If Transformers.js is available, embeddings will use Transformers.js offline.
+- Otherwise, kontxt falls back to a lightweight pseudo-embedding mode.
 
 ---
 

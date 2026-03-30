@@ -3,11 +3,11 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-const PID_FILE = path.join(os.homedir(), '.mnemix', 'server.pid')
+const PID_FILE = path.join(os.homedir(), '.kontxt', 'server.pid')
 
 export async function stopCommand() {
   if (!fs.existsSync(PID_FILE)) {
-    console.log(chalk.yellow('  no mnemix server running'))
+    console.log(chalk.yellow('  no kontxt server running'))
     return
   }
 
@@ -25,7 +25,7 @@ export async function stopCommand() {
   if (running) {
     try {
       process.kill(pid, 'SIGTERM')
-      console.log(chalk.green('  ✓ mnemix server stopped (pid ' + pid + ')'))
+      console.log(chalk.green('  ✓ kontxt server stopped (pid ' + pid + ')'))
     } catch {
       console.log(chalk.yellow('  could not stop process, pid file cleaned up'))
     }

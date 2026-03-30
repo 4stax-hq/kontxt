@@ -13,16 +13,17 @@ export async function editCommand(id: string, newContent: string) {
     return
   }
 
-  const embedding = await embedText(newContent)
+  const { embedding, tier } = await embedText(newContent)
 
   db.prepare(`
     UPDATE memories
-    SET content = ?, summary = ?, embedding = ?, accessed_at = ?
+    SET content = ?, summary = ?, embedding = ?, embedding_tier = ?, accessed_at = ?
     WHERE id = ?
   `).run(
     newContent,
     newContent.slice(0, 100),
     Buffer.from(new Float32Array(embedding).buffer),
+    tier,
     new Date().toISOString(),
     match.id
   )

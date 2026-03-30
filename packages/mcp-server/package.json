@@ -8,7 +8,6 @@
     "start": "tsx src/server.ts"
   },
   "dependencies": {
-    "@mnemix/core": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^9.4.0",
     "openai": "^4.0.0",

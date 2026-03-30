@@ -4,8 +4,8 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-const PID_FILE = path.join(os.homedir(), '.mnemix', 'server.pid')
-const LOG_FILE = path.join(os.homedir(), '.mnemix', 'server.log')
+const PID_FILE = path.join(os.homedir(), '.kontxt', 'server.pid')
+const LOG_FILE = path.join(os.homedir(), '.kontxt', 'server.log')
 
 function findTsx(): string | null {
   const candidates = [
@@ -26,7 +26,7 @@ export async function startCommand() {
     const pid = fs.readFileSync(PID_FILE, 'utf-8').trim()
     try {
       process.kill(Number(pid), 0)
-      console.log(chalk.yellow('  mnemix server already running (pid ' + pid + ')'))
+      console.log(chalk.yellow('  kontxt server already running (pid ' + pid + ')'))
       return
     } catch {
       fs.unlinkSync(PID_FILE)
@@ -55,7 +55,7 @@ export async function startCommand() {
   child.unref()
   fs.writeFileSync(PID_FILE, String(child.pid))
 
-  console.log(chalk.green('  ✓ mnemix server started (pid ' + child.pid + ')'))
-  console.log(chalk.gray('  logs: ~/.mnemix/server.log'))
-  console.log(chalk.gray('  mnemix stop — to stop'))
+  console.log(chalk.green('  ✓ kontxt server started (pid ' + child.pid + ')'))
+  console.log(chalk.gray('  logs: ~/.kontxt/server.log'))
+  console.log(chalk.gray('  kontxt stop — to stop'))
 }

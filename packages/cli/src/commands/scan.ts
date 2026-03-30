@@ -3,13 +3,13 @@ import ora from 'ora'
 import fs from 'fs'
 import path from 'path'
 import { v4 as uuid } from 'uuid'
-import { getDb, insertMemory, findSimilarMemory, updateMemoryContent } from '../vault/db.js'
+import { getDb, insertMemory, findSimilarMemory, supersedeMemory } from '../vault/db.js'
 import { embedText } from '../vault/embed.js'
-import { extractMemoriesFromTranscript } from '@mnemix/core'
-import { MemoryType } from '@mnemix/core'
+import { extractMemoriesFromTranscript } from '../../../core/dist/extractor.js'
+import type { MemoryType } from '../../../core/dist/index.js'
 import os from 'os'
 
-const CONFIG_PATH = path.join(os.homedir(), '.mnemix', 'config.json')
+const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 function getConfig(): any {
   if (!fs.existsSync(CONFIG_PATH)) return {}
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) } catch { return {} }
@@ -121,11 +121,32 @@ async function storeMemories(
   for (const item of extracted) {
     if (!item.content || !item.type) { skipped++; continue }
     try {
-      const embedding = await embedText(item.content)
-      const duplicate = findSimilarMemory(db, embedding, 0.92)
+      const { embedding, tier } = await embedText(item.content)
+      const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
 
       if (duplicate) {
-        updateMemoryContent(db, duplicate.id, item.content, embedding)
+        const newId = uuid()
+        supersedeMemory(db, duplicate.id, newId)
+
+        const now = new Date().toISOString()
+        insertMemory(db, {
+          id: newId,
+          content: item.content,
+          summary: item.content.slice(0, 100),
+          source: 'scanned',
+          type: item.type as MemoryType,
+          embedding,
+          embedding_tier: tier,
+          superseded_by: null,
+          tags: [],
+          project,
+          related_ids: [],
+          privacy_level: 'private',
+          importance_score: 0.8,
+          access_count: 0,
+          created_at: now,
+          accessed_at: now,
+        })
         console.log(chalk.yellow('  ~ updated  ' + item.content.slice(0, 70)))
         updated++
       } else {
@@ -137,6 +158,7 @@ async function storeMemories(
           source: 'scanned',
           type: item.type as MemoryType,
           embedding,
+          embedding_tier: tier,
           tags: [],
           project,
           related_ids: [],
@@ -192,5 +214,5 @@ export async function scanCommand(options: { dir?: string; project?: string }) {
     '\n  scan complete: ' + stored + ' stored, ' + updated + ' updated, ' + skipped + ' skipped'
   ))
   console.log(chalk.gray('  project tagged as: ' + projectName))
-  console.log(chalk.gray('  run: mnemix list --project ' + projectName + '\n'))
+    console.log(chalk.gray('  run: kontxt list --project ' + projectName + '\n'))
 }

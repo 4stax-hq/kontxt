@@ -5,13 +5,13 @@ import { v4 as uuid } from 'uuid'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { getDb, getAllMemories, insertMemory, incrementAccess, findSimilarMemory, updateMemoryContent } from './vault/db.js'
+import { getDb, getAllMemories, insertMemory, incrementAccess, findSimilarMemory, supersedeMemory, deleteMemory } from './vault/db.js'
 import { embedText, cosineSimilarity, scoreMemory } from './vault/embed.js'
 import { extractMemoriesFromTranscript } from '../../core/src/extractor.js'
 
 type MemoryType = 'preference' | 'fact' | 'project' | 'decision' | 'skill' | 'episodic'
 
-const CONFIG_PATH = path.join(os.homedir(), '.mnemix', 'config.json')
+const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 
 function getConfig(): any {
   if (!fs.existsSync(CONFIG_PATH)) return {}
@@ -19,9 +19,83 @@ function getConfig(): any {
 }
 
 const server = new McpServer({
-  name: 'mnemix',
+  name: 'kontxt',
   version: '0.1.0',
 })
+
+function scoreMemories(memories: any[], queryEmbedding: number[], limit: number) {
+  return memories
+    .map(m => ({
+      memory: m,
+      score: scoreMemory(
+        cosineSimilarity(m.embedding, queryEmbedding),
+        m.created_at,
+        m.access_count,
+        m.importance_score
+      ),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+}
+
+server.registerPrompt(
+  'kontxt_context',
+  {
+    title: 'kontxt Context',
+    description: 'Fetches the most relevant memories from your local kontxt vault.',
+    argsSchema: {
+      query: z.string().describe('current task or question to find relevant memories for'),
+      limit: z.number().optional().describe('max memories to return, default 5'),
+      project: z.string().optional().describe('filter to a specific project'),
+    },
+  },
+  async ({ query, limit = 5, project }) => {
+    const db = getDb()
+    const { embedding: queryEmbedding, tier: queryTier } = await embedText(query)
+    let memories = getAllMemories(db)
+    if (project) memories = memories.filter(m => m.project === project)
+
+    const tierMemories = memories.filter(m => m.embedding_tier === queryTier)
+    const scored = scoreMemories(tierMemories.length ? tierMemories : memories, queryEmbedding, limit)
+    scored.forEach(({ memory }) => incrementAccess(db, memory.id))
+
+    if (scored.length === 0) {
+      return {
+        messages: [
+          {
+            role: 'user',
+            content: { type: 'text', text: 'No relevant memories found in your kontxt vault.' },
+          },
+        ],
+      }
+    }
+
+    const byType: Record<string, string[]> = {}
+    for (const { memory } of scored) {
+      if (!byType[memory.type]) byType[memory.type] = []
+      byType[memory.type].push(memory.content)
+    }
+
+    const sections = Object.entries(byType)
+      .map(([type, items]) => type.toUpperCase() + ':\n' + items.map(i => '  - ' + i).join('\n'))
+      .join('\n\n')
+
+    return {
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text:
+              'Relevant context from your kontxt memory vault (use this to personalize your response):\n\n' +
+              sections +
+              '\n\nIf this context is irrelevant, ignore it. Do not mention the memory system unless asked.',
+          },
+        },
+      ],
+    }
+  }
+)
 
 server.tool(
   'get_relevant_context',
@@ -33,11 +107,12 @@ server.tool(
   },
   async ({ query, limit = 5, project }) => {
     const db = getDb()
-    const queryEmbedding = await embedText(query)
+    const { embedding: queryEmbedding, tier: queryTier } = await embedText(query)
     let memories = getAllMemories(db)
     if (project) memories = memories.filter(m => m.project === project)
 
-    const scored = memories
+    const tierMemories = memories.filter(m => m.embedding_tier === queryTier)
+    const scored = (tierMemories.length ? tierMemories : memories)
       .map(m => ({
         memory: m,
         score: scoreMemory(
@@ -80,6 +155,190 @@ server.tool(
 )
 
 server.tool(
+  'list_memories',
+  'List memories from the kontxt vault (optionally filtered by project).',
+  {
+    project: z.string().optional().describe('filter to a specific project'),
+    limit: z.number().optional().describe('max results, default 10'),
+  },
+  async ({ project, limit = 10 }) => {
+    const db = getDb()
+    let memories = getAllMemories(db)
+    if (project) memories = memories.filter(m => m.project === project)
+    const items = memories.slice(0, limit)
+
+    if (items.length === 0) {
+      return { content: [{ type: 'text' as const, text: 'No memories found.' }] }
+    }
+
+    const text = items
+      .map(
+        m =>
+          `[${m.id.slice(0, 8)}] (${m.type}) ${m.content.replace(/\s+/g, ' ').slice(0, 220)}`
+      )
+      .join('\n')
+
+    return { content: [{ type: 'text' as const, text: text }] }
+  }
+)
+
+server.tool(
+  'search_memories',
+  'Semantic search in the kontxt vault.',
+  {
+    query: z.string().describe('query to search for'),
+    limit: z.number().optional().describe('max results, default 5'),
+    project: z.string().optional().describe('filter to a specific project'),
+  },
+  async ({ query, limit = 5, project }) => {
+    const db = getDb()
+    const { embedding: queryEmbedding, tier: queryTier } = await embedText(query)
+    let memories = getAllMemories(db)
+    if (project) memories = memories.filter(m => m.project === project)
+
+    const tierMemories = memories.filter(m => m.embedding_tier === queryTier)
+    const scored = scoreMemories(tierMemories.length ? tierMemories : memories, queryEmbedding, limit)
+    scored.forEach(({ memory }) => incrementAccess(db, memory.id))
+
+    if (scored.length === 0) {
+      return { content: [{ type: 'text' as const, text: 'No relevant memories found.' }] }
+    }
+
+    const text = scored
+      .map(
+        ({ memory, score }, i) =>
+          `${i + 1}. [${memory.id.slice(0, 8)}] (${memory.type}) score=${score.toFixed(3)}\n${memory.content}`
+      )
+      .join('\n\n')
+
+    return { content: [{ type: 'text' as const, text: text }] }
+  }
+)
+
+server.tool(
+  'delete_memory',
+  'Delete a memory by id (partial id ok).',
+  {
+    id: z.string().describe('memory id (partial id ok)'),
+  },
+  async ({ id }) => {
+    const db = getDb()
+    const all = getAllMemories(db)
+    const match = all.find(m => m.id.startsWith(id))
+
+    if (!match) {
+      return { content: [{ type: 'text' as const, text: `No memory found with id starting: ${id}` }] }
+    }
+
+    deleteMemory(db, match.id)
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: `Deleted [${match.id.slice(0, 8)}] ${match.content.slice(0, 180)}`,
+        },
+      ],
+    }
+  }
+)
+
+server.tool(
+  'auto_capture',
+  'Extract durable memories from a conversation transcript and store them in your kontxt vault. Best-effort, deduped by embedding similarity.',
+  {
+    transcript: z.string().describe('full conversation text (or a large excerpt)'),
+    project: z.string().optional().describe('associate extracted memories with a project'),
+    limit: z.number().optional().describe('max number of items to store (default 50)'),
+  },
+  async ({ transcript, project, limit = 50 }) => {
+    const config = getConfig()
+    const extracted = await extractMemoriesFromTranscript(transcript, config.openai_api_key)
+
+    const db = getDb()
+    let stored = 0
+    let updated = 0
+    const storedIds: string[] = []
+
+    if (!extracted.length) {
+      return { content: [{ type: 'text' as const, text: 'auto_capture: no durable memories found.' }] }
+    }
+
+    for (const item of extracted.slice(0, limit)) {
+      if (!item.content || !item.type) continue
+      try {
+        const { embedding, tier } = await embedText(item.content)
+        const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
+
+        if (duplicate) {
+          const newId = uuid()
+          supersedeMemory(db, duplicate.id, newId)
+
+          const now = new Date().toISOString()
+          insertMemory(db, {
+            id: newId,
+            content: item.content,
+            summary: item.content.slice(0, 100),
+            source: 'auto-captured',
+            type: item.type as MemoryType,
+            embedding,
+            embedding_tier: tier,
+            tags: [],
+            project,
+            related_ids: [],
+            privacy_level: 'private',
+            importance_score: 0.65,
+            access_count: 0,
+            created_at: now,
+            accessed_at: now,
+          })
+          updated++
+        } else {
+          const now = new Date().toISOString()
+          const id = uuid()
+          insertMemory(db, {
+            id,
+            content: item.content,
+            summary: item.content.slice(0, 100),
+            source: 'auto-captured',
+            type: item.type as MemoryType,
+            embedding,
+            embedding_tier: tier,
+            tags: [],
+            project,
+            related_ids: [],
+            privacy_level: 'private',
+            importance_score: 0.65,
+            access_count: 0,
+            created_at: now,
+            accessed_at: now,
+          })
+          stored++
+          storedIds.push(id)
+        }
+      } catch {
+        // best-effort: ignore failures for a single item
+      }
+    }
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text:
+            'auto_capture: stored ' +
+            stored +
+            ', updated ' +
+            updated +
+            '. stored_ids=' +
+            storedIds.slice(0, 10).join(', ') +
+            (storedIds.length > 10 ? '...' : ''),
+        },
+      ],
+    }
+  }
+)
+
+server.tool(
   'store_memory',
   'Save an important fact about the user to long-term memory. Use this when the user shares preferences, makes decisions, mentions projects, or reveals skills.',
   {
@@ -89,13 +348,33 @@ server.tool(
   },
   async ({ content, type, project }) => {
     const db = getDb()
-    const embedding = await embedText(content)
+    const { embedding, tier } = await embedText(content)
 
-    const duplicate = findSimilarMemory(db, embedding, 0.92)
+    const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
     if (duplicate) {
-      updateMemoryContent(db, duplicate.id, content, embedding)
+      const newId = uuid()
+      supersedeMemory(db, duplicate.id, newId)
+
+      const now = new Date().toISOString()
+      insertMemory(db, {
+        id: newId,
+        content,
+        summary: content.slice(0, 100),
+        source: 'ai-captured',
+        type: type as MemoryType,
+        embedding,
+        embedding_tier: tier,
+        tags: [],
+        project,
+        related_ids: [],
+        privacy_level: 'private',
+        importance_score: 0.7,
+        access_count: 0,
+        created_at: now,
+        accessed_at: now,
+      })
       return {
-        content: [{ type: 'text' as const, text: 'Updated existing memory: "' + content + '"' }]
+        content: [{ type: 'text' as const, text: 'Superseded existing memory: "' + content + '"' }]
       }
     }
 
@@ -107,6 +386,7 @@ server.tool(
       source: 'ai-captured',
       type: type as MemoryType,
       embedding,
+      embedding_tier: tier,
       tags: [],
       project,
       related_ids: [],
@@ -147,11 +427,31 @@ server.tool(
     for (const item of extracted) {
       if (!item.content || !item.type) continue
       try {
-        const embedding = await embedText(item.content)
-        const duplicate = findSimilarMemory(db, embedding, 0.92)
+        const { embedding, tier } = await embedText(item.content)
+        const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
 
         if (duplicate) {
-          updateMemoryContent(db, duplicate.id, item.content, embedding)
+          const newId = uuid()
+          supersedeMemory(db, duplicate.id, newId)
+
+          const now = new Date().toISOString()
+          insertMemory(db, {
+            id: newId,
+            content: item.content,
+            summary: item.content.slice(0, 100),
+            source: 'auto-extracted',
+            type: item.type as MemoryType,
+            embedding,
+            embedding_tier: tier,
+            tags: [],
+            project,
+            related_ids: [],
+            privacy_level: 'private',
+            importance_score: 0.6,
+            access_count: 0,
+            created_at: now,
+            accessed_at: now,
+          })
           updated++
         } else {
           const now = new Date().toISOString()
@@ -162,6 +462,7 @@ server.tool(
             source: 'auto-extracted',
             type: item.type as MemoryType,
             embedding,
+            embedding_tier: tier,
             tags: [],
             project,
             related_ids: [],

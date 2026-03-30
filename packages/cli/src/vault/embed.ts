@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 
-const CONFIG_PATH = path.join(os.homedir(), '.mnemix', 'config.json')
+const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 
 function getConfig(): any {
   if (!fs.existsSync(CONFIG_PATH)) return {}
@@ -75,17 +75,81 @@ function pseudoEmbed(text: string): number[] {
   return vec.map(v => v / mag)
 }
 
-type EmbedTier = 'openai' | 'ollama' | 'pseudo'
+let transformersPipelinePromise: Promise<any> | null = null
+
+async function getTransformersPipeline(): Promise<any> {
+  if (transformersPipelinePromise) return transformersPipelinePromise
+
+  transformersPipelinePromise = (async () => {
+    const config = getConfig()
+    const candidates: string[] = []
+    if (typeof config.transformers_embedding_model === 'string' && config.transformers_embedding_model) {
+      candidates.push(config.transformers_embedding_model)
+    }
+    // Small-ish general embedding models. Users can override via `transformers_embedding_model`.
+    candidates.push('Xenova/all-MiniLM-L6-v2')
+    candidates.push('Xenova/paraphrase-MiniLM-L6-v2')
+
+    const transformers = await import('@xenova/transformers')
+
+    let lastErr: any = null
+    for (const model of candidates) {
+      try {
+        // feature-extraction + mean pooling produces fixed-size sentence embeddings.
+        return await transformers.pipeline('feature-extraction', model, {
+          pooling: 'mean',
+          normalize: true,
+        })
+      } catch (err) {
+        lastErr = err
+      }
+    }
+
+    throw lastErr || new Error('Failed to initialize Transformers embeddings pipeline')
+  })()
+
+  return transformersPipelinePromise
+}
+
+function toNumberArray(value: any): number[] {
+  if (!value) return []
+  if (Array.isArray(value)) return value.map(v => Number(v))
+  if (typeof value?.tolist === 'function') return value.tolist().map((v: any) => Number(v))
+  if (value?.data) {
+    const data = value.data
+    if (Array.isArray(data)) return data.map((v: any) => Number(v))
+    if (typeof data.length === 'number') return Array.from(data).map((v: any) => Number(v))
+  }
+  if (typeof value?.length === 'number') return Array.from(value).map((v: any) => Number(v))
+  return []
+}
+
+async function embedTransformers(text: string): Promise<number[]> {
+  const pipeline = await getTransformersPipeline()
+
+  // Transformers.js pipeline outputs a tensor-like object.
+  const out = await pipeline(text, { pooling: 'mean', normalize: true })
+  const embedding = toNumberArray(out?.data ?? out)
+
+  if (!embedding.length) {
+    throw new Error('Transformers embedding produced an empty vector')
+  }
+  return embedding
+}
+
+type EmbedTier = 'openai' | 'ollama' | 'transformers' | 'pseudo'
 let resolvedTier: EmbedTier | null = null
 
-export async function embedText(text: string): Promise<number[]> {
+export async function embedText(
+  text: string
+): Promise<{ embedding: number[]; tier: EmbedTier }> {
   const config = getConfig()
 
   if (config.openai_api_key) {
     try {
       const result = await embedOpenAI(text, config.openai_api_key)
       resolvedTier = 'openai'
-      return result
+      return { embedding: result, tier: 'openai' }
     } catch {
       console.error('  OpenAI embedding failed, falling back...')
     }
@@ -95,12 +159,21 @@ export async function embedText(text: string): Promise<number[]> {
     try {
       const result = await embedOllama(text)
       resolvedTier = 'ollama'
-      return result
+      return { embedding: result, tier: 'ollama' }
     } catch {}
   }
 
+  try {
+    const result = await embedTransformers(text)
+    resolvedTier = 'transformers'
+    return { embedding: result, tier: 'transformers' }
+  } catch {
+    // Transformers is best-effort; if it fails (missing dependency, first-run download, etc),
+    // we still want kontxt to function.
+  }
+
   resolvedTier = 'pseudo'
-  return pseudoEmbed(text)
+  return { embedding: pseudoEmbed(text), tier: 'pseudo' }
 }
 
 export function getActiveTier(): EmbedTier {
@@ -111,8 +184,8 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length === 0 || b.length === 0) return 0
   const len = Math.min(a.length, b.length)
   const dot = a.slice(0, len).reduce((sum, ai, i) => sum + ai * b[i], 0)
-  const magA = Math.sqrt(a.reduce((s, v) => s + v * v, 0))
-  const magB = Math.sqrt(b.reduce((s, v) => s + v * v, 0))
+  const magA = Math.sqrt(a.slice(0, len).reduce((s, v) => s + v * v, 0))
+  const magB = Math.sqrt(b.slice(0, len).reduce((s, v) => s + v * v, 0))
   if (magA === 0 || magB === 0) return 0
   return dot / (magA * magB)
 }

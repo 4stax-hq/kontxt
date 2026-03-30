@@ -4,11 +4,11 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { v4 as uuid } from 'uuid'
-import { getDb, insertMemory, findSimilarMemory, updateMemoryContent } from '../vault/db.js'
+import { getDb, insertMemory, findSimilarMemory, supersedeMemory } from '../vault/db.js'
 import { embedText } from '../vault/embed.js'
-import { MemoryType } from '@mnemix/core'
+import type { MemoryType } from '../../../core/dist/index.js'
 
-const CONFIG_PATH = path.join(os.homedir(), '.mnemix', 'config.json')
+const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 
 function getConfig(): any {
   if (!fs.existsSync(CONFIG_PATH)) return {}
@@ -133,8 +133,8 @@ export async function extractCommand(options: { file?: string; project?: string 
 
   if (!transcript.trim()) {
     console.log(chalk.red('no transcript provided'))
-    console.log(chalk.gray('  cat conversation.txt | mnemix extract'))
-    console.log(chalk.gray('  mnemix extract --file conversation.txt'))
+        console.log(chalk.gray('  cat conversation.txt | kontxt extract'))
+        console.log(chalk.gray('  kontxt extract --file conversation.txt'))
     return
   }
 
@@ -160,7 +160,7 @@ export async function extractCommand(options: { file?: string; project?: string 
       if (!model) {
         spinner.fail(chalk.red('no extraction backend available'))
         console.log(chalk.gray('  1. ollama pull llama3.2'))
-        console.log(chalk.gray('  2. mnemix init --key sk-...'))
+        console.log(chalk.gray('  2. kontxt init --key sk-...'))
         return
       }
       spinner.text = 'extracting via ' + model + '...'
@@ -186,11 +186,32 @@ export async function extractCommand(options: { file?: string; project?: string 
       if (!item.content || !item.type) { skipped++; continue }
 
       try {
-        const embedding = await embedText(item.content)
-        const duplicate = findSimilarMemory(db, embedding, 0.92)
+        const { embedding, tier } = await embedText(item.content)
+        const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
 
         if (duplicate) {
-          updateMemoryContent(db, duplicate.id, item.content, embedding)
+          const newId = uuid()
+          supersedeMemory(db, duplicate.id, newId)
+
+          const now = new Date().toISOString()
+          insertMemory(db, {
+            id: newId,
+            content: item.content,
+            summary: item.content.slice(0, 100),
+            source: 'auto-extracted',
+            type: item.type as MemoryType,
+            embedding,
+            embedding_tier: tier,
+            superseded_by: null,
+            tags: [],
+            project: options.project,
+            related_ids: [],
+            privacy_level: 'private',
+            importance_score: 0.7,
+            access_count: 0,
+            created_at: now,
+            accessed_at: now,
+          })
           console.log(chalk.yellow('  ~ updated  [' + duplicate.id.slice(0, 8) + '] ' + item.content.slice(0, 70)))
           updated++
         } else {
@@ -203,6 +224,7 @@ export async function extractCommand(options: { file?: string; project?: string 
             source: 'extracted',
             type: item.type as MemoryType,
             embedding,
+            embedding_tier: tier,
             tags: [],
             project: options.project,
             related_ids: [],

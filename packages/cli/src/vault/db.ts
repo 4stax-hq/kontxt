@@ -2,9 +2,9 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import os from 'os'
 import fs from 'fs'
-import { Memory, MemoryType, PrivacyLevel } from '@mnemix/core'
+import type { Memory, MemoryType, PrivacyLevel, EmbeddingTier } from '../../../core/dist/index.js'
 
-const VAULT_DIR = path.join(os.homedir(), '.mnemix')
+const VAULT_DIR = path.join(os.homedir(), '.kontxt')
 const DB_PATH = path.join(VAULT_DIR, 'vault.db')
 
 export function getDb(): Database.Database {
@@ -22,6 +22,8 @@ export function getDb(): Database.Database {
       source TEXT NOT NULL,
       type TEXT NOT NULL,
       embedding BLOB,
+      embedding_tier TEXT DEFAULT 'pseudo',
+      superseded_by TEXT DEFAULT NULL,
       tags TEXT DEFAULT '[]',
       project TEXT,
       related_ids TEXT DEFAULT '[]',
@@ -37,6 +39,16 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_created ON memories(created_at);
   `)
 
+  // Backfill embedding_tier for existing vaults.
+  try {
+    db.exec(`ALTER TABLE memories ADD COLUMN embedding_tier TEXT DEFAULT 'pseudo'`)
+  } catch {}
+
+  // Backfill superseded_by for existing vaults.
+  try {
+    db.exec(`ALTER TABLE memories ADD COLUMN superseded_by TEXT DEFAULT NULL`)
+  } catch {}
+
   return db
 }
 
@@ -44,7 +56,7 @@ export function insertMemory(db: Database.Database, memory: Memory): void {
   const stmt = db.prepare(`
     INSERT INTO memories VALUES (
       @id, @content, @summary, @source, @type,
-      @embedding, @tags, @project, @related_ids,
+      @embedding, @embedding_tier, @superseded_by, @tags, @project, @related_ids,
       @privacy_level, @importance_score, @access_count,
       @created_at, @accessed_at
     )
@@ -53,13 +65,15 @@ export function insertMemory(db: Database.Database, memory: Memory): void {
   stmt.run({
     ...memory,
     embedding: Buffer.from(new Float32Array(memory.embedding).buffer),
+    embedding_tier: memory.embedding_tier || 'pseudo',
+    superseded_by: memory.superseded_by ?? null,
     tags: JSON.stringify(memory.tags),
     related_ids: JSON.stringify(memory.related_ids),
   })
 }
 
 export function getAllMemories(db: Database.Database): Memory[] {
-  const rows = db.prepare('SELECT * FROM memories ORDER BY created_at DESC').all() as any[]
+  const rows = db.prepare('SELECT * FROM memories WHERE superseded_by IS NULL ORDER BY created_at DESC').all() as any[]
   return rows.map(deserializeRow)
 }
 
@@ -85,12 +99,23 @@ export function deleteMemory(db: Database.Database, id: string): void {
   db.prepare('DELETE FROM memories WHERE id = ?').run(id)
 }
 
+export function supersedeMemory(db: Database.Database, id: string, supersededById: string): void {
+  db.prepare(`
+    UPDATE memories
+    SET superseded_by = ?
+    WHERE id = ?
+      AND (superseded_by IS NULL OR superseded_by = '')
+  `).run(supersededById, id)
+}
+
 function deserializeRow(row: any): Memory {
   return {
     ...row,
     embedding: row.embedding
       ? Array.from(new Float32Array(row.embedding.buffer))
       : [],
+    embedding_tier: row.embedding_tier || 'pseudo',
+    superseded_by: row.superseded_by ?? null,
     tags: JSON.parse(row.tags || '[]'),
     related_ids: JSON.parse(row.related_ids || '[]'),
   }
@@ -99,7 +124,8 @@ function deserializeRow(row: any): Memory {
 export function findSimilarMemory(
   db: Database.Database,
   embedding: number[],
-  threshold = 0.92
+  threshold = 0.92,
+  embeddingTier?: EmbeddingTier
 ): Memory | null {
   const all = getAllMemories(db)
   if (all.length === 0) return null
@@ -108,10 +134,12 @@ export function findSimilarMemory(
   let bestScore = 0
 
   for (const memory of all) {
+    if (embeddingTier && memory.embedding_tier !== embeddingTier) continue
     if (memory.embedding.length === 0) continue
-    const dot = embedding.reduce((sum, v, i) => sum + v * (memory.embedding[i] || 0), 0)
-    const magA = Math.sqrt(embedding.reduce((s, v) => s + v * v, 0))
-    const magB = Math.sqrt(memory.embedding.reduce((s, v) => s + v * v, 0))
+    const len = Math.min(embedding.length, memory.embedding.length)
+    const dot = embedding.slice(0, len).reduce((sum, v, i) => sum + v * memory.embedding[i], 0)
+    const magA = Math.sqrt(embedding.slice(0, len).reduce((s, v) => s + v * v, 0))
+    const magB = Math.sqrt(memory.embedding.slice(0, len).reduce((s, v) => s + v * v, 0))
     const sim = magA && magB ? dot / (magA * magB) : 0
     if (sim > bestScore) { bestScore = sim; best = memory }
   }
@@ -123,16 +151,18 @@ export function updateMemoryContent(
   db: Database.Database,
   id: string,
   content: string,
-  embedding: number[]
+  embedding: number[],
+  embeddingTier: EmbeddingTier
 ): void {
   db.prepare(`
     UPDATE memories
-    SET content = ?, summary = ?, embedding = ?, accessed_at = ?
+    SET content = ?, summary = ?, embedding = ?, embedding_tier = ?, accessed_at = ?
     WHERE id = ?
   `).run(
     content,
     content.slice(0, 100),
     Buffer.from(new Float32Array(embedding).buffer),
+    embeddingTier,
     new Date().toISOString(),
     id
   )

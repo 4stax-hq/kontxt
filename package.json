@@ -1,12 +1,28 @@
 {
-  "name": "mnemix",
-  "private": true,
+  "name": "kontxt",
+  "version": "0.1.0",
+  "bin": {
+    "kontxt": "./bin/kontxt.js"
+  },
   "scripts": {
-    "build": "pnpm -r build",
-    "dev": "pnpm -r dev"
+    "build:core": "tsc -p packages/core/tsconfig.json",
+    "build:cli": "tsc -p packages/cli/tsconfig.json",
+    "build": "npm run build:core && npm run build:cli",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^9.4.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.0.0",
+    "openai": "^4.0.0",
+    "ora": "^8.0.0",
+    "uuid": "^9.0.0",
+    "tsx": "^4.21.0",
+    "zod": "^3.22.0",
+    "typescript": "^5.4.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
     "@types/node": "^20.0.0"
   }
 }

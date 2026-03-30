@@ -9,16 +9,19 @@ export async function searchCommand(query: string, options: { limit?: number }) 
 
   try {
     const db = getDb()
-    const queryEmbedding = await embedText(query)
+    const { embedding: queryEmbedding, tier: queryTier } = await embedText(query)
     const all = getAllMemories(db)
 
     if (all.length === 0) {
       spinner.stop()
-      console.log(chalk.yellow('\n  vault is empty. run: mnemix add "..."\n'))
+      console.log(chalk.yellow('\n  vault is empty. run: kontxt add "..."\n'))
       return
     }
 
-    const scored = all
+    const candidates = all.filter(m => m.embedding_tier === queryTier)
+    const scoredBase = candidates.length ? candidates : all
+
+    const scored = scoredBase
       .map(m => ({
         memory: m,
         score: scoreMemory(

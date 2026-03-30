@@ -1,16 +1,15 @@
 {
-  "name": "mnemix",
+  "name": "kontxt",
   "version": "0.1.0",
   "description": "Your AI memory layer. Works everywhere.",
   "bin": {
-    "mnemix": "./dist/index.js"
+    "kontxt": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "@mnemix/core": "workspace:*",
     "better-sqlite3": "^9.4.0",
     "openai": "^4.0.0",
     "commander": "^12.0.0",

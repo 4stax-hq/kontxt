@@ -8,6 +8,8 @@ export type MemoryType =
 
 export type PrivacyLevel = 'private' | 'anonymizable' | 'shareable'
 
+export type EmbeddingTier = 'openai' | 'ollama' | 'transformers' | 'pseudo'
+
 export interface Memory {
   id: string
   content: string
@@ -15,6 +17,8 @@ export interface Memory {
   source: string
   type: MemoryType
   embedding: number[]
+  embedding_tier: EmbeddingTier
+  superseded_by?: string | null
   tags: string[]
   project?: string
   related_ids: string[]
