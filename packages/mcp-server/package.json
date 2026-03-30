@@ -1,9 +1,9 @@
 {
   "name": "@mnemix/mcp-server",
   "version": "0.1.0",
-  "main": "src/server.ts",
+  "main": "dist/server.js",
   "scripts": {
-    "build": "echo 'mcp-server uses tsx at runtime, no compile step needed'",
+    "build": "tsc -p tsconfig.json",
     "dev": "tsx src/server.ts",
     "start": "tsx src/server.ts"
   },

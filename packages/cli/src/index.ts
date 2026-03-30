@@ -115,29 +115,22 @@ program
   .command('serve')
   .description('Start MCP server in foreground (for debugging)')
   .action(() => {
-    const serverTs = path.resolve(process.cwd(), 'packages/mcp-server/src/server.ts')
-    const serverJs = path.resolve(process.cwd(), 'packages/mcp-server/dist/server.js')
+    // Must work when installed from npm (no repo-relative dev paths).
+    // When compiled, this file lives at: packages/cli/dist/index.js
+    // So the MCP server dist is at: packages/mcp-server/dist/server.js
+    const installedCandidate = path.resolve(__dirname, '../../mcp-server/dist/server.js')
+    const repoCandidate = path.resolve(process.cwd(), 'packages/mcp-server/dist/server.js')
 
-    const tsxBinCandidates = [
-      path.resolve(process.cwd(), 'node_modules/.bin/tsx'),
-      path.resolve(process.cwd(), 'packages/mcp-server/node_modules/.bin/tsx'),
-      path.resolve(process.cwd(), 'packages/cli/node_modules/.bin/tsx'),
-    ]
+    const serverJs = fs.existsSync(installedCandidate)
+      ? installedCandidate
+      : repoCandidate
 
-    const tsxBin = tsxBinCandidates.find(p => fs.existsSync(p))
-    if (!fs.existsSync(serverTs) && !fs.existsSync(serverJs)) {
-      console.error('MCP server not found (no src/server.ts nor dist/server.js)')
+    if (!fs.existsSync(serverJs)) {
+      console.error('MCP server not found at: ' + serverJs)
+      console.error('Try running `npm run build` first.')
       process.exit(1)
     }
 
-    if (tsxBin && fs.existsSync(serverTs)) {
-      // Prefer running from TypeScript so we don't depend on potentially stale `dist/`.
-      const child = spawn(tsxBin, [serverTs], { stdio: 'inherit' })
-      child.on('exit', code => process.exit(code ?? 1))
-      return
-    }
-
-    // Fallback: run compiled JS
     const child = spawn(process.execPath, [serverJs], { stdio: 'inherit' })
     child.on('exit', code => process.exit(code ?? 1))
   })

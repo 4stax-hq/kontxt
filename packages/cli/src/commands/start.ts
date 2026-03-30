@@ -7,18 +7,12 @@ import os from 'os'
 const PID_FILE = path.join(os.homedir(), '.kontxt', 'server.pid')
 const LOG_FILE = path.join(os.homedir(), '.kontxt', 'server.log')
 
-function findTsx(): string | null {
-  const candidates = [
-    path.join(process.cwd(), 'packages/mcp-server/node_modules/.bin/tsx'),
-    path.join(process.cwd(), 'packages/mcp-server/node_modules/.bin/tsx'),
-  ]
-  return candidates.find(p => fs.existsSync(p)) || null
-}
-
-function getServerPath(): string {
-  const local = path.join(process.cwd(), 'packages/mcp-server/src/server.ts')
-  if (fs.existsSync(local)) return local
-  return path.join(__dirname, '../../../mcp-server/src/server.ts')
+function getServerJsPath(): string {
+  // When compiled, this file lives at: packages/cli/dist/commands/start.js
+  // So MCP server dist is at: packages/mcp-server/dist/server.js
+  const installedCandidate = path.resolve(__dirname, '../../../mcp-server/dist/server.js')
+  const repoCandidate = path.resolve(process.cwd(), 'packages/mcp-server/dist/server.js')
+  return fs.existsSync(installedCandidate) ? installedCandidate : repoCandidate
 }
 
 export async function startCommand() {
@@ -33,21 +27,15 @@ export async function startCommand() {
     }
   }
 
-  const serverPath = getServerPath()
-  const tsx = findTsx()
-
-  if (!tsx) {
-    console.log(chalk.red('  tsx not found — run pnpm install first'))
-    return
-  }
-
-  if (!fs.existsSync(serverPath)) {
-    console.log(chalk.red('  server not found at: ' + serverPath))
+  const serverJs = getServerJsPath()
+  if (!fs.existsSync(serverJs)) {
+    console.log(chalk.red('  server not found at: ' + serverJs))
+    console.log(chalk.gray('  try: npm run build'))
     return
   }
 
   const log = fs.openSync(LOG_FILE, 'a')
-  const child = spawn(tsx, [serverPath], {
+  const child = spawn(process.execPath, [serverJs], {
     detached: true,
     stdio: ['ignore', log, log],
   })

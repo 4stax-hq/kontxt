@@ -7,7 +7,8 @@
   "scripts": {
     "build:core": "tsc -p packages/core/tsconfig.json",
     "build:cli": "tsc -p packages/cli/tsconfig.json",
-    "build": "npm run build:core && npm run build:cli",
+    "build:mcp-server": "node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -p packages/mcp-server/tsconfig.json",
+    "build": "npm run build:core && npm run build:mcp-server && npm run build:cli",
     "prepare": "npm run build"
   },
   "dependencies": {
@@ -23,6 +24,8 @@
     "typescript": "^5.4.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/uuid": "^9.0.0",
     "@types/node": "^20.0.0"
   }
 }
