@@ -1,149 +1,251 @@
 # kontxt
 
-A local-first memory layer for AI tools. Persistent, semantically-searchable context across sessions and providers via MCP.
+Local-first continuity for AI work across chats, tools, and providers.
 
-**npm:** [`@4stax/kontxt`](https://www.npmjs.com/package/@4stax/kontxt) — the unscoped name `kontxt` is already taken on npm.
+`kontxt` keeps project context on your machine, maintains a small living project state in Markdown, and prepares compact carry-forward context for new sessions. It is designed for workflows where you switch between tools such as Cursor, Claude Desktop, Codex, or web chat products and do not want to restart from zero every time.
 
-After a global install, the CLI on your PATH is still **`kontxt`**; without that, use **`npx -y @4stax/kontxt …`**.
+**npm:** [`@4stax/kontxt`](https://www.npmjs.com/package/@4stax/kontxt)  
+The installed CLI command is still `kontxt`.
 
----
+## What It Does
 
-## What it does
-
-AI tools have no memory between sessions. kontxt maintains a persistent vault on your machine. Any MCP-compatible client reads from and writes to it during conversation — injecting only the most relevant memories, not everything.
-
-```
-You: "help me fix this auth bug"
-kontxt: [injects] "prefers JWT with 7-day expiry" + "uses Supabase" + "FastAPI backend"
-AI:   already knows your stack.
-```
-
----
-
-## Architecture
-
-```
-~/.kontxt/vault.db         SQLite database, lives on your machine
-       │
-       ├── memories         content, embeddings, embedding_tier, type, tags, project, scores
-       └── config.json      API key, settings
-
-src/
-├── cli/
-│   ├── index.ts            Commander entry (kontxt serve loads MCP inline)
-│   └── commands/           init, add, search, list, edit, delete, capture, …
-├── mcp/server.ts           MCP tools + prompts (stdio)
-├── vault/
-│   ├── db.ts               SQLite via better-sqlite3
-│   └── embed.ts            embedding providers + relevance scoring
-├── types.ts
-└── extractor.ts            transcript → durable facts (OpenAI or Ollama)
-
-dist/                       compiled output (from npm install / publish, not committed)
-bin/kontxt.js               shim → dist/cli/index.js
-```
-
----
-
-## Requirements
-
-- Node.js >= 18
-- OpenAI API key (optional — used first when set in `~/.kontxt/config.json`)
-- Offline semantic search works without a key via **Transformers.js** (`all-MiniLM-L6-v2`), with models cached under `~/.kontxt/models` after the first run
-
----
+- Stores durable context locally in `~/.kontxt/vault.db`
+- Keeps a project state in `.kontxt/CONTEXT.md`, `DECISIONS.md`, `FACTS.md`, and `TIMELINE.md`
+- Retrieves relevant context for a new session
+- Supports `auto`, `ask`, and `fresh` continuity modes
+- Captures the outcome of a finished session and updates local state
+- Exposes MCP tools for compatible clients
 
 ## Install
 
+Requirements:
+- Node.js `>=18`
+
+One-off usage:
+
 ```bash
-# One-off (no global install)
 npx -y @4stax/kontxt init
-
-# Optional: set OpenAI key for higher-quality embeddings
-npx -y @4stax/kontxt init --key sk-...
-
-# Optional: install globally so the binary is just `kontxt`
-npm install -g @4stax/kontxt
 ```
 
-`init` creates the local vault (`~/.kontxt/vault.db`) and writes MCP config for Cursor and Claude Desktop when those config paths exist. New configs use `npx -y @4stax/kontxt serve` so MCP works without a global install.
-
----
-
-## CLI
-
-With a global install (`npm install -g @4stax/kontxt`), run `kontxt …` as below. Otherwise prefix with `npx -y @4stax/kontxt` (for example `npx -y @4stax/kontxt search "…"`).
+Global install:
 
 ```bash
-# Initialize vault + MCP config
+npm install -g @4stax/kontxt
 kontxt init
+```
+
+Optional: save an OpenAI key for higher-quality embeddings and transcript extraction:
+
+```bash
 kontxt init --key sk-...
+```
 
-# Add + search
-kontxt add "I prefer JWT with 7-day expiry"
-kontxt search "what stack am I using?" --limit 3
+Without an API key, `kontxt` uses:
+1. Transformers.js local embeddings when available
+2. Ollama local models when available
+3. A weaker lexical fallback when neither is available
 
-# Capture from a transcript (stdin or file)
-cat conversation.txt | kontxt capture --project my-app
-kontxt capture --file conversation.txt
+## Quick Start
 
-# Start MCP server + inspect
-kontxt start
-kontxt status
+Inside a repo:
 
-# Cleanup
+```bash
+kontxt living init --dir .
+kontxt living focus "Describe the current project focus" --dir .
+kontxt living task "Add the next concrete task" --dir .
+kontxt watch --dir .
+```
+
+At the start of a new AI session:
+
+```bash
+kontxt session start "continue working on auth flow" --mode ask --dir .
+```
+
+At the end of a session:
+
+```bash
+cat transcript.txt | kontxt session end --provider claude-web --dir .
+```
+
+Search the current project state or stored memory:
+
+```bash
+kontxt search "what changed this week?" --limit 5
+kontxt search "what decisions have we made about auth?" --limit 5
+```
+
+## Daily Workflow
+
+Recommended loop:
+
+1. Start `kontxt watch --dir .` in the project.
+2. Keep `.kontxt/*.md` as the working state for the project.
+3. Before starting a new chat, run `kontxt session start ...`.
+4. Inject the returned summary only if the session should continue prior work.
+5. After the session, run `kontxt session end` on the transcript.
+
+This keeps the project timeline, decisions, and durable context up to date locally.
+
+## Continuity Modes
+
+`kontxt session start` supports three modes:
+
+- `--mode auto`
+  Inject automatically when relevance is strong.
+- `--mode ask`
+  Prepare a summary, but expect the caller or UI to confirm before injecting. This is the safest default.
+- `--mode fresh`
+  Do not inject prior context automatically.
+
+Example:
+
+```bash
+kontxt session start "continue debugging the API timeout issue" --mode ask --provider cursor --dir .
+kontxt session start "fresh start on a new idea" --mode fresh --provider claude-web --dir .
+```
+
+## Living Project Files
+
+`kontxt living init` creates:
+
+- `.kontxt/CONTEXT.md`
+- `.kontxt/DECISIONS.md`
+- `.kontxt/FACTS.md`
+- `.kontxt/TIMELINE.md`
+
+These files are the human-readable project state. `kontxt` can update them directly and ingest them back into the local vault.
+
+Commands:
+
+```bash
+kontxt living init --dir .
+kontxt living focus "Current focus text" --dir .
+kontxt living task "Next task" --dir .
+kontxt living fact "Stable fact" --dir .
+kontxt living decision "Short title" --decision "Final decision text" --context "Optional context" --dir .
+kontxt living note "What changed today" --dir .
+```
+
+When `kontxt watch --dir .` is running, edits to these files are re-ingested automatically.
+
+## Session Commands
+
+### Start
+
+Prepare continuity for a new session:
+
+```bash
+kontxt session start "<task>" [options]
+```
+
+Useful options:
+
+- `--mode ask|auto|fresh`
+- `--provider <name>`
+- `--dir <path>`
+- `--project <name>`
+- `--limit <n>`
+- `--json`
+
+Example:
+
+```bash
+kontxt session start "continue building the npm package" --mode ask --provider codex --dir .
+```
+
+### End
+
+Capture a completed session:
+
+```bash
+kontxt session end [options]
+```
+
+Input:
+- `--file <path>` to read a transcript file
+- or pipe the transcript over stdin
+
+Useful options:
+
+- `--provider <name>`
+- `--dir <path>`
+- `--project <name>`
+- `--limit <n>`
+- `--json`
+
+Example:
+
+```bash
+cat transcript.txt | kontxt session end --provider claude-web --dir .
+```
+
+`session end` will:
+- extract durable facts, decisions, and progress notes
+- store them in the local vault
+- update living Markdown where applicable
+- record session metadata for future continuity
+
+## Search And Memory Commands
+
+```bash
+kontxt add "The project uses Supabase" --type fact --project my-app
+kontxt search "what stack are we using?" --limit 5
+kontxt list --project my-app
+kontxt edit <id> "Updated memory text"
+kontxt delete <id>
 kontxt vacuum
 ```
 
-**Memory types:** `fact` `preference` `project` `decision` `skill` `episodic`
+Memory types:
+- `fact`
+- `preference`
+- `project`
+- `decision`
+- `skill`
+- `episodic`
 
----
+## Capture Commands
 
-## MCP Tools
+Capture a transcript manually:
 
-| Tool | Description |
-|------|-------------|
-| `get_relevant_context` | Semantic search, returns top-k scored memories |
-| `search_memories` | Semantic search, returns top-k scored memories (with ids/scores) |
-| `list_memories` | List memories from the vault (optionally filtered by project) |
-| `delete_memory` | Delete a memory by id (partial id ok) |
-| `auto_capture` | Extract durable memories from a transcript and store them |
-| `store_memory` | Write a memory from inside a conversation |
-| `store_conversation_summary` | Summarize and store a full conversation |
-| `get_user_profile` | All memories grouped by type |
+```bash
+cat conversation.txt | kontxt capture --project my-app
+kontxt capture --file conversation.txt --project my-app
+```
+
+Scan a repo for project facts:
+
+```bash
+kontxt scan --dir . --project my-app
+```
+
+Notes:
+- Transcript extraction is better with an OpenAI key or Ollama.
+- Without them, `kontxt` falls back to heuristics.
+
+## MCP
+
+Start the MCP server on stdio:
 
 ```bash
 kontxt serve
 ```
 
----
+Main MCP tools:
 
-## Prompt Templates
+- `get_relevant_context`
+- `search_memories`
+- `list_memories`
+- `delete_memory`
+- `auto_capture`
+- `store_memory`
+- `store_conversation_summary`
+- `get_user_profile`
 
-- `kontxt_context` | Returns the most relevant memories for a given `query` (args: `query`, optional `limit`, optional `project`)
+### Cursor
 
----
-
-## Connecting to Cursor
-
-`~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "kontxt": {
-      "command": "npx",
-      "args": ["-y", "@4stax/kontxt", "serve"]
-    }
-  }
-}
-```
-
-If you use a **global** install, you may use `"command": "kontxt", "args": ["serve"]` instead.
-
-## Connecting to Claude Desktop
-
-`~/Library/Application Support/Claude/claude_desktop_config.json`:
+`~/.cursor/mcp.json`
 
 ```json
 {
@@ -156,48 +258,100 @@ If you use a **global** install, you may use `"command": "kontxt", "args": ["ser
 }
 ```
 
----
+### Claude Desktop
 
-## Relevance Scoring
+`~/Library/Application Support/Claude/claude_desktop_config.json`
 
+```json
+{
+  "mcpServers": {
+    "kontxt": {
+      "command": "npx",
+      "args": ["-y", "@4stax/kontxt", "serve"]
+    }
+  }
+}
 ```
-score = (semantic_similarity * 0.50)
-      + (recency_decay       * 0.20)
-      + (access_frequency    * 0.15)
-      + (importance_score    * 0.15)
+
+`kontxt init` will try to write these configs automatically.
+
+## Storage
+
+Local files:
+
+- `~/.kontxt/vault.db`
+- `~/.kontxt/config.json`
+- `~/.kontxt/session-state.json`
+- `~/.kontxt/models/` for cached local embedding models
+
+Project-local files:
+
+- `.kontxt/CONTEXT.md`
+- `.kontxt/DECISIONS.md`
+- `.kontxt/FACTS.md`
+- `.kontxt/TIMELINE.md`
+
+By default, data stays local.
+
+## Optional Supabase Sync
+
+This is optional and currently push-only.
+
+Migration:
+
+- [`supabase/migrations/20260411000000_kontxt_cloud_v0.sql`](supabase/migrations/20260411000000_kontxt_cloud_v0.sql)
+
+Config in `~/.kontxt/config.json`:
+
+```json
+{
+  "supabase_url": "https://<project-ref>.supabase.co",
+  "supabase_anon_key": "<anon key>",
+  "supabase_access_token": "<user JWT>"
+}
 ```
 
-Recency uses exponential decay over 30 days. Frequency is log-scaled.
+Commands:
 
----
+```bash
+kontxt sync status
+kontxt sync push
+kontxt sync push --dry-run
+kontxt sync push --include-private
+```
 
-## Data
+## Troubleshooting
 
-Everything stays local. Single SQLite file at `~/.kontxt/vault.db`. No telemetry. No accounts. OpenAI key only used for `text-embedding-3-small` calls if provided.
+If `better-sqlite3` native bindings fail after install:
 
-### Embedding backends (order)
-1. **OpenAI** — `text-embedding-3-small` when `openai_api_key` is set (about US $0.00002 per call at typical usage).
-2. **Transformers.js** — `Xenova/all-MiniLM-L6-v2` in-process, no API key; first run downloads the model once.
-3. **Ollama** — local embeddings if `ollama serve` is running and an embed model is available.
-4. **Pseudo** — hashed bag-of-words fallback only when nothing else works; not comparable across tiers with real embeddings.
+```bash
+npm rebuild better-sqlite3
+```
 
-Semantic search only compares memories stored in the **same** `embedding_tier` as the current query, so switching providers does not produce misleading cosine scores against old vectors.
+Check current setup:
 
----
+```bash
+kontxt status
+```
 
-## Roadmap
+If local embeddings are unavailable, `kontxt` will still run using the lexical fallback, but retrieval quality will be lower.
 
-- [x] v0.1 — local vault, CLI, MCP server, relevance scoring, auto-capture
-- [ ] v0.2 — browser extension, cross-provider injection, memory classification
-- [ ] v0.3 — React dashboard, permission controls, audit log
-- [ ] v0.4 — optional encrypted cloud sync
+## Verification
 
----
+```bash
+npm run build
+npm run test:e2e
+```
 
-## Contributing
+The smoke test covers:
+- init
+- add/search
+- living file management
+- watch/ingest
+- session start/session end
+- sync status
+- status
 
-Core logic: `src/vault/db.ts` (storage), `src/vault/embed.ts` (embeddings + scoring), `src/mcp/server.ts` (MCP).
+## License
 
----
-
-MIT License · Part of [4StaX](https://4stax.com)
+MIT

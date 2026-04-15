@@ -3,6 +3,65 @@ export interface ExtractedMemory {
   type: 'preference' | 'fact' | 'project' | 'decision' | 'skill' | 'episodic'
 }
 
+function normalizeStatement(value: string): string {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/^[\-\*\d.)\s]+/, '')
+    .trim()
+}
+
+function toThirdPerson(statement: string): string {
+  return normalizeStatement(statement)
+    .replace(/\bI am\b/gi, 'The user is')
+    .replace(/\bI\'m\b/gi, 'The user is')
+    .replace(/\bI have\b/gi, 'The user has')
+    .replace(/\bI\'ve\b/gi, 'The user has')
+    .replace(/\bI prefer\b/gi, 'The user prefers')
+    .replace(/\bI use\b/gi, 'The user uses')
+    .replace(/\bI need\b/gi, 'The user needs')
+    .replace(/\bI want\b/gi, 'The user wants')
+    .replace(/\bI will\b/gi, 'The user will')
+    .replace(/\bI\b/gi, 'The user')
+}
+
+function guessType(statement: string): ExtractedMemory['type'] | null {
+  if (/\bprefer|like to|usually|tend to|want\b/i.test(statement)) return 'preference'
+  if (/\bdecided|decision|going with|chose|choose|settled on\b/i.test(statement)) return 'decision'
+  if (/\bworking on|building|launching|shipping|project|repo|package|mvp\b/i.test(statement)) return 'project'
+  if (/\bexperienced with|good at|skilled|expert|know\b/i.test(statement)) return 'skill'
+  if (/\b(today|yesterday|this week|progress|changed|shipped|fixed|implemented|launched)\b/i.test(statement)) return 'episodic'
+  if (statement.length >= 18) return 'fact'
+  return null
+}
+
+function heuristicExtractMemories(transcript: string): ExtractedMemory[] {
+  const rawParts = transcript
+    .split(/\n+/)
+    .flatMap(line => line.split(/(?<=[.?!])\s+/))
+    .map(part => part.replace(/^(user|human|me|client|developer)\s*:\s*/i, '').trim())
+    .filter(Boolean)
+
+  const seen = new Set<string>()
+  const out: ExtractedMemory[] = []
+
+  for (const part of rawParts) {
+    if (part.length < 12) continue
+    if (/^(assistant|claude|gpt|codex)\s*:/i.test(part)) continue
+    if (!/\b(i|my|we|our|project|repo|package|timeline|decision|prefer|working on|building|launch)\b/i.test(part)) continue
+
+    const content = toThirdPerson(part)
+    const type = guessType(content)
+    if (!type) continue
+
+    const key = content.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push({ content, type })
+  }
+
+  return out.slice(0, 25)
+}
+
 export async function getOllamaInstructModel(): Promise<string | null> {
   try {
     const res = await fetch('http://localhost:11434/api/tags', {
@@ -87,7 +146,7 @@ export async function extractMemoriesFromTranscript(
   }
 
   const model = await getOllamaInstructModel()
-  if (!model) return []
+  if (!model) return heuristicExtractMemories(transcript)
 
   try {
     const res = await fetch('http://localhost:11434/api/chat', {
@@ -108,5 +167,7 @@ export async function extractMemoriesFromTranscript(
     const match = clean.match(/\[[\s\S]*\]/)
     if (!match) return []
     return JSON.parse(match[0])
-  } catch { return [] }
+  } catch {}
+
+  return heuristicExtractMemories(transcript)
 }

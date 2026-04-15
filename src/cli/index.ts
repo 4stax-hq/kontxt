@@ -13,6 +13,17 @@ import { statusCommand } from './commands/status.js'
 import { scanCommand } from './commands/scan.js'
 import { captureCommand } from './commands/capture.js'
 import { vacuumCommand } from './commands/vacuum.js'
+import { watchCommand } from './commands/watch.js'
+import { livingInitCommand } from './commands/living-init.js'
+import {
+  livingDecisionCommand,
+  livingFactCommand,
+  livingFocusCommand,
+  livingNoteCommand,
+  livingTaskCommand,
+} from './commands/living-manage.js'
+import { sessionEndCommand, sessionStartCommand } from './commands/session.js'
+import { syncPushCommand, syncStatusCommand } from './commands/sync.js'
 
 const program = new Command()
 
@@ -99,6 +110,99 @@ program
   .option('--days <n>', 'retention window in days (default: 180)')
   .option('--importance <n>', 'importance_score threshold (default: 0.2)')
   .action(vacuumCommand)
+
+program
+  .command('watch')
+  .description('Watch living markdown (.kontxt/*.md and root CONTEXT.md, …) and ingest into the vault')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project tag for new memories')
+  .option('--debounce <ms>', 'debounce file writes (default: 800)', '800')
+  .option('--once', 'ingest all living markdown once and exit')
+  .action(watchCommand)
+
+const living = program
+  .command('living')
+  .description('Living workspace markdown templates under .kontxt/')
+
+living
+  .command('init')
+  .description('Create CONTEXT.md, DECISIONS.md, FACTS.md, TIMELINE.md under .kontxt/')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-f, --force', 'overwrite existing files')
+  .action(livingInitCommand)
+
+living
+  .command('focus <text>')
+  .description('Set the current focus in .kontxt/CONTEXT.md and sync it into the vault')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project tag for synced memories')
+  .action(livingFocusCommand)
+
+living
+  .command('task <text>')
+  .description('Add an active task to .kontxt/CONTEXT.md and sync it into the vault')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project tag for synced memories')
+  .action(livingTaskCommand)
+
+living
+  .command('fact <text>')
+  .description('Add a stable fact to .kontxt/FACTS.md and sync it into the vault')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project tag for synced memories')
+  .action(livingFactCommand)
+
+living
+  .command('decision <title>')
+  .description('Add a decision entry to .kontxt/DECISIONS.md and sync it into the vault')
+  .requiredOption('--decision <text>', 'final decision text')
+  .option('--context <text>', 'decision context / tradeoffs')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project tag for synced memories')
+  .action(livingDecisionCommand)
+
+living
+  .command('note <text>')
+  .description('Append a dated timeline note to .kontxt/TIMELINE.md and sync it into the vault')
+  .option('--date <yyyy-mm-dd>', 'override date heading (default: today)')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project tag for synced memories')
+  .action(livingNoteCommand)
+
+const sync = program.command('sync').description('Optional Supabase cloud mirror (see supabase/migrations)')
+
+sync.command('status').description('Show sync configuration state').action(syncStatusCommand)
+
+sync
+  .command('push')
+  .description('Upsert eligible memories to public.kontxt_memories')
+  .option('--include-private', 'also push private memories')
+  .option('--dry-run', 'print counts only; no network writes')
+  .action(syncPushCommand)
+
+const session = program.command('session').description('Cross-provider continuity workflow')
+
+session
+  .command('start <query>')
+  .description('Prepare compact continuity context for the next chat/session')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project name override')
+  .option('--provider <name>', 'provider or surface (cursor, claude-web, codex, gemini, etc.)')
+  .option('--mode <mode>', 'auto | ask | fresh', 'ask')
+  .option('-l, --limit <n>', 'max ranked memories to consider', '8')
+  .option('--json', 'machine-readable output')
+  .action(sessionStartCommand)
+
+session
+  .command('end')
+  .description('Capture the finished session transcript and update local continuity state')
+  .option('-f, --file <path>', 'transcript file (or pipe via stdin)')
+  .option('-d, --dir <path>', 'repository root (default: cwd)')
+  .option('-p, --project <name>', 'project name override')
+  .option('--provider <name>', 'provider or surface (cursor, claude-web, codex, gemini, etc.)')
+  .option('-l, --limit <n>', 'max extracted items to store', '50')
+  .option('--json', 'machine-readable output')
+  .action(sessionEndCommand)
 
 // Alias
 program

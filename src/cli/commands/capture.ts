@@ -3,11 +3,8 @@ import ora from 'ora'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { v4 as uuid } from 'uuid'
-import { getDb, insertMemory, findSimilarMemory, supersedeMemory } from '../../vault/db.js'
-import { embedText } from '../../vault/embed.js'
 import { extractMemoriesFromTranscript } from '../../extractor.js'
-import type { MemoryType } from '../../types.js'
+import { storeExtractedMemories } from '../../capture-store.js'
 
 const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 
@@ -49,70 +46,13 @@ export async function captureCommand(options: { file?: string; project?: string;
 
     spinner.text = 'storing memories...'
 
-    const db = getDb()
-    let stored = 0
-    let updated = 0
-    let skipped = 0
-
     const maxItems = typeof options.limit === 'string' ? Number(options.limit) : (options.limit ?? 50)
-
-    for (const item of extracted.slice(0, maxItems)) {
-      if (!item.content || !item.type) { skipped++; continue }
-      try {
-        const { embedding, tier } = await embedText(item.content)
-        const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
-
-        if (duplicate) {
-          const newId = uuid()
-          supersedeMemory(db, duplicate.id, newId)
-
-          const now = new Date().toISOString()
-          insertMemory(db, {
-            id: newId,
-            content: item.content,
-            summary: item.content.slice(0, 100),
-            source: 'auto-captured',
-            type: item.type as MemoryType,
-            embedding,
-            embedding_tier: tier,
-            superseded_by: null,
-            tags: [],
-            project: options.project,
-            related_ids: [],
-            privacy_level: 'private',
-            importance_score: 0.65,
-            access_count: 0,
-            created_at: now,
-            accessed_at: now,
-          })
-          updated++
-        } else {
-          const now = new Date().toISOString()
-          const id = uuid()
-          insertMemory(db, {
-            id,
-            content: item.content,
-            summary: item.content.slice(0, 100),
-            source: 'auto-captured',
-            type: item.type as MemoryType,
-            embedding,
-            embedding_tier: tier,
-            superseded_by: null,
-            tags: [],
-            project: options.project,
-            related_ids: [],
-            privacy_level: 'private',
-            importance_score: 0.65,
-            access_count: 0,
-            created_at: now,
-            accessed_at: now,
-          })
-          stored++
-        }
-      } catch {
-        skipped++
-      }
-    }
+    const { stored, updated, skipped } = await storeExtractedMemories(extracted, {
+      project: options.project,
+      source: 'auto-captured',
+      importanceScore: 0.65,
+      limit: maxItems,
+    })
 
     spinner.stop()
     console.log(
@@ -124,4 +64,3 @@ export async function captureCommand(options: { file?: string; project?: string;
     spinner.fail(chalk.red('capture failed: ' + err.message))
   }
 }
-

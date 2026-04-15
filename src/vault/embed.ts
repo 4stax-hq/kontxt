@@ -143,6 +143,46 @@ async function embedTransformers(text: string): Promise<number[]> {
 type EmbedTier = 'openai' | 'ollama' | 'transformers' | 'pseudo'
 let resolvedTier: EmbedTier | null = null
 
+export async function detectAvailableEmbeddingBackend(): Promise<{
+  tier: EmbedTier
+  label: string
+}> {
+  const config = getConfig()
+
+  if (config.openai_api_key) {
+    try {
+      await embedOpenAI('kontxt healthcheck', config.openai_api_key)
+      return { tier: 'openai', label: 'openai (text-embedding-3-small)' }
+    } catch {
+      // Continue to honest fallback detection below.
+    }
+  }
+
+  try {
+    await embedTransformers('kontxt healthcheck')
+    return {
+      tier: 'transformers',
+      label: 'offline semantic (Transformers.js — all-MiniLM-L6-v2; models cache in ~/.kontxt/models)',
+    }
+  } catch {
+    // first-run download/network/model init may fail
+  }
+
+  if (await isOllamaRunning()) {
+    try {
+      await embedOllama('kontxt healthcheck')
+      return { tier: 'ollama', label: 'ollama (local embeddings via running ollama serve)' }
+    } catch {
+      // Continue to pseudo fallback.
+    }
+  }
+
+  return {
+    tier: 'pseudo',
+    label: 'pseudo (weak lexical fallback — add an OpenAI key or configure a working local embedding backend)',
+  }
+}
+
 export async function embedText(
   text: string
 ): Promise<{ embedding: number[]; tier: EmbedTier }> {

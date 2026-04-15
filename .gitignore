@@ -55,6 +55,9 @@ pnpm-debug.log*
 **/.DS_Store
 Thumbs.db
 
+# Local E2E isolated HOME (scripts/e2e-local.sh)
+.e2e-home/
+
 # Misc local files
 *.pid
 *.seed

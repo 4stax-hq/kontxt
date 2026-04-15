@@ -3,7 +3,7 @@ import ora from 'ora'
 import fs from 'fs'
 import path from 'path'
 import { v4 as uuid } from 'uuid'
-import { getDb, insertMemory, findSimilarMemory, supersedeMemory } from '../../vault/db.js'
+import { getDb, insertMemory, findSimilarMemory, supersedeMemory, findMemoryByContent } from '../../vault/db.js'
 import { embedText } from '../../vault/embed.js'
 import { extractMemoriesFromTranscript } from '../../extractor.js'
 import type { MemoryType } from '../../types.js'
@@ -121,6 +121,11 @@ async function storeMemories(
   for (const item of extracted) {
     if (!item.content || !item.type) { skipped++; continue }
     try {
+      const exact = findMemoryByContent(db, item.content)
+      if (exact) {
+        skipped++
+        continue
+      }
       const { embedding, tier } = await embedText(item.content)
       const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
 

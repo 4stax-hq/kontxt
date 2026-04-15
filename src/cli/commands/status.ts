@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { getDb } from '../../vault/db.js'
-import { getActiveTier } from '../../vault/embed.js'
+import { detectAvailableEmbeddingBackend, getActiveTier } from '../../vault/embed.js'
 
 const PID_FILE = path.join(os.homedir(), '.kontxt', 'server.pid')
 const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
@@ -30,14 +30,7 @@ export async function statusCommand() {
     ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
     : {}
 
-  let embedTier = 'pseudo (offline)'
-  try {
-    const res = await fetch('http://localhost:11434/api/tags', {
-      signal: AbortSignal.timeout(1000),
-    })
-    if (res.ok) embedTier = 'ollama'
-  } catch {}
-  if (config.openai_api_key) embedTier = 'openai'
+  const backend = await detectAvailableEmbeddingBackend()
 
   let activeTier: string | null = null
   try {
@@ -46,7 +39,8 @@ export async function statusCommand() {
     activeTier = null
   }
 
-  console.log(chalk.green('  ✓ embeddings: ' + embedTier + (activeTier ? ' (active: ' + activeTier + ')' : '')))
+  const backendColor = backend.tier === 'pseudo' ? chalk.yellow : chalk.green
+  console.log(backendColor('  ✓ embeddings: ' + backend.label + (activeTier ? ' (active: ' + activeTier + ')' : '')))
   console.log(
     chalk.gray(
       '  config: ' +

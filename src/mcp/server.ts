@@ -5,10 +5,11 @@ import { v4 as uuid } from 'uuid'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { getDb, getAllMemories, insertMemory, incrementAccess, findSimilarMemory, supersedeMemory, deleteMemory } from '../vault/db.js'
-import { embedText, cosineSimilarity, scoreMemory } from '../vault/embed.js'
+import { getDb, getAllMemories, insertMemory, incrementAccess, findSimilarMemory, supersedeMemory, deleteMemory, findMemoryByContent } from '../vault/db.js'
+import { embedText } from '../vault/embed.js'
 import type { Memory } from '../types.js'
 import { extractMemoriesFromTranscript } from '../extractor.js'
+import { rankMemories } from '../retrieval.js'
 
 type MemoryType = 'preference' | 'fact' | 'project' | 'decision' | 'skill' | 'episodic'
 
@@ -23,21 +24,6 @@ const server = new McpServer({
   name: 'kontxt',
   version: '0.1.0',
 })
-
-function scoreMemories(memories: Memory[], queryEmbedding: number[], limit: number) {
-  return memories
-    .map(m => ({
-      memory: m,
-      score: scoreMemory(
-        cosineSimilarity(m.embedding, queryEmbedding),
-        m.created_at,
-        m.access_count,
-        m.importance_score
-      ),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-}
 
 server.registerPrompt(
   'kontxt_context',
@@ -54,11 +40,8 @@ server.registerPrompt(
     const { query, limit = 5, project } = args
     const db = getDb()
     const { embedding: queryEmbedding, tier: queryTier } = await embedText(query)
-    let memories = getAllMemories(db)
-    if (project) memories = memories.filter(m => m.project === project)
-
-    const tierMemories = memories.filter(m => m.embedding_tier === queryTier)
-    const scored = scoreMemories(tierMemories, queryEmbedding, limit)
+    const memories = getAllMemories(db)
+    const scored = rankMemories(memories, { query, queryEmbedding, queryTier, limit, project })
     scored.forEach(({ memory }) => incrementAccess(db, memory.id))
 
     if (scored.length === 0) {
@@ -111,22 +94,8 @@ server.tool(
     const { query, limit = 5, project } = args
     const db = getDb()
     const { embedding: queryEmbedding, tier: queryTier } = await embedText(query)
-    let memories = getAllMemories(db)
-    if (project) memories = memories.filter(m => m.project === project)
-
-    const tierMemories = memories.filter(m => m.embedding_tier === queryTier)
-    const scored = tierMemories
-      .map(m => ({
-        memory: m,
-        score: scoreMemory(
-          cosineSimilarity(m.embedding, queryEmbedding),
-          m.created_at,
-          m.access_count,
-          m.importance_score
-        )
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, limit)
+    const memories = getAllMemories(db)
+    const scored = rankMemories(memories, { query, queryEmbedding, queryTier, limit, project })
 
     scored.forEach(({ memory }) => incrementAccess(db, memory.id))
 
@@ -198,11 +167,8 @@ server.tool(
     const { query, limit = 5, project } = args
     const db = getDb()
     const { embedding: queryEmbedding, tier: queryTier } = await embedText(query)
-    let memories = getAllMemories(db)
-    if (project) memories = memories.filter(m => m.project === project)
-
-    const tierMemories = memories.filter(m => m.embedding_tier === queryTier)
-    const scored = scoreMemories(tierMemories, queryEmbedding, limit)
+    const memories = getAllMemories(db)
+    const scored = rankMemories(memories, { query, queryEmbedding, queryTier, limit, project })
     scored.forEach(({ memory }) => incrementAccess(db, memory.id))
 
     if (scored.length === 0) {
@@ -273,6 +239,8 @@ server.tool(
     for (const item of extracted.slice(0, limit)) {
       if (!item.content || !item.type) continue
       try {
+        const exact = findMemoryByContent(db, item.content)
+        if (exact) continue
         const { embedding, tier } = await embedText(item.content)
         const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
 
@@ -356,6 +324,12 @@ server.tool(
   async (args: any) => {
     const { content, type, project } = args
     const db = getDb()
+    const exact = findMemoryByContent(db, content)
+    if (exact) {
+      return {
+        content: [{ type: 'text' as const, text: 'Memory already exists: "' + exact.content + '"' }]
+      }
+    }
     const { embedding, tier } = await embedText(content)
 
     const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
@@ -436,6 +410,8 @@ server.tool(
     for (const item of extracted) {
       if (!item.content || !item.type) continue
       try {
+        const exact = findMemoryByContent(db, item.content)
+        if (exact) continue
         const { embedding, tier } = await embedText(item.content)
         const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
 

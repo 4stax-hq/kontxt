@@ -77,6 +77,14 @@ export function getAllMemories(db: Database.Database): Memory[] {
   return rows.map(deserializeRow)
 }
 
+function normalizeMemoryContent(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\w\s:/.-]/g, '')
+    .trim()
+}
+
 export function searchByKeyword(db: Database.Database, query: string): Memory[] {
   const rows = db.prepare(`
     SELECT * FROM memories 
@@ -88,15 +96,25 @@ export function searchByKeyword(db: Database.Database, query: string): Memory[] 
 }
 
 export function incrementAccess(db: Database.Database, id: string): void {
-  db.prepare(`
-    UPDATE memories 
-    SET access_count = access_count + 1, accessed_at = ?
-    WHERE id = ?
-  `).run(new Date().toISOString(), id)
+  try {
+    db.prepare(`
+      UPDATE memories 
+      SET access_count = access_count + 1, accessed_at = ?
+      WHERE id = ?
+    `).run(new Date().toISOString(), id)
+  } catch {
+    // Retrieval should still work even when the DB is temporarily read-only.
+  }
 }
 
 export function deleteMemory(db: Database.Database, id: string): void {
   db.prepare('DELETE FROM memories WHERE id = ?').run(id)
+}
+
+/** Remove all memories whose source starts with prefix (e.g. living-md rel path key). */
+export function deleteMemoriesWithSourcePrefix(db: Database.Database, prefix: string): number {
+  const result = db.prepare('DELETE FROM memories WHERE source LIKE ?').run(prefix + '%')
+  return result.changes
 }
 
 export function supersedeMemory(db: Database.Database, id: string, supersededById: string): void {
@@ -145,6 +163,11 @@ export function findSimilarMemory(
   }
 
   return bestScore >= threshold ? best : null
+}
+
+export function findMemoryByContent(db: Database.Database, content: string): Memory | null {
+  const normalized = normalizeMemoryContent(content)
+  return getAllMemories(db).find(memory => normalizeMemoryContent(memory.content) === normalized) || null
 }
 
 export function updateMemoryContent(

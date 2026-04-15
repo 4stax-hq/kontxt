@@ -1,7 +1,7 @@
 import { v4 as uuid } from 'uuid'
 import chalk from 'chalk'
 import ora from 'ora'
-import { getDb, insertMemory, findSimilarMemory, supersedeMemory } from '../../vault/db.js'
+import { getDb, insertMemory, findSimilarMemory, supersedeMemory, findMemoryByContent } from '../../vault/db.js'
 import { embedText } from '../../vault/embed.js'
 import type { MemoryType } from '../../types.js'
 
@@ -10,6 +10,13 @@ export async function addCommand(content: string, options: { type?: string; proj
 
   try {
     const db = getDb()
+    const exact = findMemoryByContent(db, content)
+    if (exact) {
+      spinner.info(chalk.yellow(`memory already exists [${exact.id.slice(0, 8)}]`))
+      console.log(chalk.gray(`  type: ${exact.type}`))
+      if (exact.project) console.log(chalk.gray(`  project: ${exact.project}`))
+      return
+    }
     const { embedding, tier } = await embedText(content)
 
     const duplicate = findSimilarMemory(db, embedding, 0.92, tier)

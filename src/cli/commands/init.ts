@@ -2,39 +2,13 @@ import chalk from 'chalk'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { createRequire } from 'module'
 import { getDb } from '../../vault/db.js'
-
-const nodeRequire = createRequire(__filename)
+import { detectAvailableEmbeddingBackend } from '../../vault/embed.js'
 
 const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 const OLD_VAULT_DIR = path.join(os.homedir(), '.mnemix')
 const OLD_DB_PATH = path.join(OLD_VAULT_DIR, 'vault.db')
 const OLD_CONFIG_PATH = path.join(OLD_VAULT_DIR, 'config.json')
-
-async function detectEmbedTier(): Promise<string> {
-  const config = fs.existsSync(CONFIG_PATH)
-    ? JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
-    : {}
-
-  if (config.openai_api_key) return 'openai (text-embedding-3-small)'
-
-  try {
-    nodeRequire.resolve('@xenova/transformers/package.json')
-    return 'offline semantic (Transformers.js — all-MiniLM-L6-v2; models cache in ~/.kontxt/models)'
-  } catch {
-    // package not installed
-  }
-
-  try {
-    const res = await fetch('http://localhost:11434/api/tags', {
-      signal: AbortSignal.timeout(1000)
-    })
-    if (res.ok) return 'ollama (local — requires running ollama serve)'
-  } catch {}
-
-  return 'pseudo (weak lexical fallback — add OpenAI key, install @xenova/transformers, or run Ollama)'
-}
 
 function safeReadJson(filePath: string): any {
   if (!fs.existsSync(filePath)) return null
@@ -112,9 +86,10 @@ export async function initCommand(options: { key?: string }) {
     console.log(chalk.green('  ✓ OpenAI API key saved'))
   }
 
-  const tier = await detectEmbedTier()
+  const tierInfo = await detectAvailableEmbeddingBackend()
+  const tier = tierInfo.label
   const tierColor =
-    tier.startsWith('openai') || tier.startsWith('ollama') || tier.startsWith('offline')
+    tierInfo.tier !== 'pseudo'
       ? chalk.green
       : chalk.yellow
   console.log(tierColor(`  ✓ embeddings: ${tier}`))
