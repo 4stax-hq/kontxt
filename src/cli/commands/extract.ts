@@ -3,10 +3,9 @@ import ora from 'ora'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { v4 as uuid } from 'uuid'
-import { getDb, insertMemory, findSimilarMemory, supersedeMemory } from '../../vault/db.js'
-import { embedText } from '../../vault/embed.js'
 import type { MemoryType } from '../../types.js'
+import { storeExtractedMemories } from '../../capture-store.js'
+import { redactSensitiveText } from '../../content-policy.js'
 
 const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 
@@ -63,6 +62,7 @@ async function getOllamaModel(): Promise<string | null> {
 }
 
 async function extractWithOllama(transcript: string, model: string): Promise<ExtractedMemory[]> {
+  const sanitizedTranscript = redactSensitiveText(transcript).value
   const res = await fetch('http://localhost:11434/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -76,7 +76,7 @@ async function extractWithOllama(transcript: string, model: string): Promise<Ext
         },
         {
           role: 'user',
-          content: transcript.slice(0, 6000)
+          content: sanitizedTranscript.slice(0, 6000)
         }
       ],
     }),
@@ -91,6 +91,7 @@ async function extractWithOllama(transcript: string, model: string): Promise<Ext
 }
 
 async function extractWithOpenAI(transcript: string, apiKey: string): Promise<ExtractedMemory[]> {
+  const sanitizedTranscript = redactSensitiveText(transcript).value
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -104,7 +105,7 @@ async function extractWithOpenAI(transcript: string, apiKey: string): Promise<Ex
           role: 'system',
           content: 'Extract durable facts about the user from conversation transcripts. Return ONLY a JSON array: [{"content": "...", "type": "preference|fact|project|decision|skill|episodic"}]. No markdown, no explanation. Only reusable facts.'
         },
-        { role: 'user', content: transcript.slice(0, 12000) }
+        { role: 'user', content: sanitizedTranscript.slice(0, 12000) }
       ],
       temperature: 0,
     }),
@@ -176,71 +177,12 @@ export async function extractCommand(options: { file?: string; project?: string 
     }
 
     console.log(chalk.cyan('found ' + extracted.length + ' facts via ' + source + ' — storing...'))
-
-    const db = getDb()
-    let stored = 0
-    let updated = 0
-    let skipped = 0
-
-    for (const item of extracted) {
-      if (!item.content || !item.type) { skipped++; continue }
-
-      try {
-        const { embedding, tier } = await embedText(item.content)
-        const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
-
-        if (duplicate) {
-          const newId = uuid()
-          supersedeMemory(db, duplicate.id, newId)
-
-          const now = new Date().toISOString()
-          insertMemory(db, {
-            id: newId,
-            content: item.content,
-            summary: item.content.slice(0, 100),
-            source: 'auto-extracted',
-            type: item.type as MemoryType,
-            embedding,
-            embedding_tier: tier,
-            superseded_by: null,
-            tags: [],
-            project: options.project,
-            related_ids: [],
-            privacy_level: 'private',
-            importance_score: 0.7,
-            access_count: 0,
-            created_at: now,
-            accessed_at: now,
-          })
-          console.log(chalk.yellow('  ~ updated  [' + duplicate.id.slice(0, 8) + '] ' + item.content.slice(0, 70)))
-          updated++
-        } else {
-          const now = new Date().toISOString()
-          const id = uuid()
-          insertMemory(db, {
-            id,
-            content: item.content,
-            summary: item.content.slice(0, 100),
-            source: 'extracted',
-            type: item.type as MemoryType,
-            embedding,
-            embedding_tier: tier,
-            tags: [],
-            project: options.project,
-            related_ids: [],
-            privacy_level: 'private',
-            importance_score: 0.7,
-            access_count: 0,
-            created_at: now,
-            accessed_at: now,
-          })
-          console.log(chalk.green('  + stored   [' + item.type + '] ' + item.content.slice(0, 70)))
-          stored++
-        }
-      } catch {
-        skipped++
-      }
-    }
+    const { stored, updated, skipped, items } = await storeExtractedMemories(extracted, {
+      project: options.project,
+      source: 'extracted',
+      importanceScore: 0.7,
+    })
+    items.forEach(item => console.log(chalk.gray('  · [' + item.type + '] ' + item.content.slice(0, 70))))
 
     console.log(chalk.cyan('done: ' + stored + ' stored, ' + updated + ' updated, ' + skipped + ' skipped'))
 

@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { ensurePrivateDir, writePrivateFile } from './security.js'
 
 export interface SessionRecord {
   project_key: string
@@ -26,7 +27,7 @@ function defaultState(): SessionStateFile {
 }
 
 function ensureStateDir() {
-  fs.mkdirSync(path.dirname(STATE_PATH), { recursive: true })
+  ensurePrivateDir(path.dirname(STATE_PATH))
 }
 
 export function readSessionState(): SessionStateFile {
@@ -41,7 +42,7 @@ export function readSessionState(): SessionStateFile {
 
 export function writeSessionState(state: SessionStateFile) {
   ensureStateDir()
-  fs.writeFileSync(STATE_PATH, JSON.stringify(state, null, 2), 'utf-8')
+  writePrivateFile(STATE_PATH, JSON.stringify(state, null, 2))
 }
 
 export function getProjectKey(repoRoot?: string, project?: string): string {

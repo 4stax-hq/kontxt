@@ -3,14 +3,14 @@ import path from 'path'
 import os from 'os'
 import fs from 'fs'
 import type { Memory, MemoryType, PrivacyLevel, EmbeddingTier } from '../types.js'
+import { ensurePrivateDir, ensurePrivateFile } from '../security.js'
 
 const VAULT_DIR = path.join(os.homedir(), '.kontxt')
 const DB_PATH = path.join(VAULT_DIR, 'vault.db')
 
 export function getDb(): Database.Database {
-  if (!fs.existsSync(VAULT_DIR)) {
-    fs.mkdirSync(VAULT_DIR, { recursive: true })
-  }
+  ensurePrivateDir(VAULT_DIR)
+  ensurePrivateFile(DB_PATH)
 
   const db = new Database(DB_PATH)
 
@@ -168,6 +168,13 @@ export function findSimilarMemory(
 export function findMemoryByContent(db: Database.Database, content: string): Memory | null {
   const normalized = normalizeMemoryContent(content)
   return getAllMemories(db).find(memory => normalizeMemoryContent(memory.content) === normalized) || null
+}
+
+export function resolveMemoryByPrefix(db: Database.Database, idPrefix: string): { match: Memory | null; ambiguous: Memory[] } {
+  const matches = getAllMemories(db).filter(m => m.id.startsWith(idPrefix))
+  if (matches.length === 1) return { match: matches[0], ambiguous: [] }
+  if (matches.length === 0) return { match: null, ambiguous: [] }
+  return { match: null, ambiguous: matches.slice(0, 5) }
 }
 
 export function updateMemoryContent(

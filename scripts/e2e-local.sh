@@ -29,9 +29,6 @@ node dist/cli/index.js session start "continue building kontxt" --mode ask --pro
 printf 'User: I am building kontxt for cross-provider continuity.\nUser: Today I implemented session start and session end commands.\nUser: I decided the CLI should remain the source of truth for continuity.\n' | node dist/cli/index.js session end --provider claude-web --dir "$TMP_REPO"
 rm -rf "$TMP_REPO"
 
-echo "== kontxt sync status (no Supabase required) =="
-node dist/cli/index.js sync status
-
 echo "== kontxt status =="
 node dist/cli/index.js status
 

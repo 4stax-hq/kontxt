@@ -2,6 +2,7 @@ export interface ExtractedMemory {
   content: string
   type: 'preference' | 'fact' | 'project' | 'decision' | 'skill' | 'episodic'
 }
+import { redactSensitiveText } from './content-policy.js'
 
 function normalizeStatement(value: string): string {
   return value
@@ -119,6 +120,7 @@ export async function extractMemoriesFromTranscript(
   transcript: string,
   openaiApiKey?: string
 ): Promise<ExtractedMemory[]> {
+  const sanitizedTranscript = redactSensitiveText(transcript).value
   if (openaiApiKey) {
     try {
       const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -131,7 +133,7 @@ export async function extractMemoriesFromTranscript(
           model: 'gpt-4o-mini',
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: transcript.slice(0, 12000) }
+            { role: 'user', content: sanitizedTranscript.slice(0, 12000) }
           ],
           temperature: 0,
         }),
@@ -157,7 +159,7 @@ export async function extractMemoriesFromTranscript(
         stream: false,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: transcript.slice(0, 6000) }
+          { role: 'user', content: sanitizedTranscript.slice(0, 6000) }
         ],
       }),
     })
@@ -169,5 +171,5 @@ export async function extractMemoriesFromTranscript(
     return JSON.parse(match[0])
   } catch {}
 
-  return heuristicExtractMemories(transcript)
+  return heuristicExtractMemories(sanitizedTranscript)
 }

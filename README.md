@@ -7,6 +7,29 @@ Local-first continuity for AI work across chats, tools, and providers.
 **npm:** [`@4stax/kontxt`](https://www.npmjs.com/package/@4stax/kontxt)  
 The installed CLI command is still `kontxt`.
 
+## Security
+
+`kontxt` is local-first by default.
+
+- Vault data is stored under `~/.kontxt/`
+- Project state is stored in local `.kontxt/*.md` files
+- Session history is stored in `~/.kontxt/session-state.json`
+- `~/.kontxt` files are created with owner-only permissions where supported
+- No cloud sync is part of the default workflow
+- `session start --mode fresh` disables automatic carry-forward for a clean session
+
+Operational guidance:
+
+- Use `--mode ask` when reviewing carry-forward context before injection matters
+- Treat any transcript piped into `session end` or `capture` as data you are intentionally storing locally
+- If you use an OpenAI API key, it is stored locally in `~/.kontxt/config.json`
+- The local machine account is the primary trust boundary for stored memory
+
+Additional references:
+
+- [Security Notes](SECURITY.md)
+- [VS Code Extension Architecture](docs/vscode-extension.md)
+
 ## What It Does
 
 - Stores durable context locally in `~/.kontxt/vault.db`
@@ -189,7 +212,7 @@ cat transcript.txt | kontxt session end --provider claude-web --dir .
 ## Search And Memory Commands
 
 ```bash
-kontxt add "The project uses Supabase" --type fact --project my-app
+kontxt add "The project uses FastAPI and PostgreSQL" --type fact --project my-app
 kontxt search "what stack are we using?" --limit 5
 kontxt list --project my-app
 kontxt edit <id> "Updated memory text"
@@ -293,33 +316,6 @@ Project-local files:
 
 By default, data stays local.
 
-## Optional Supabase Sync
-
-This is optional and currently push-only.
-
-Migration:
-
-- [`supabase/migrations/20260411000000_kontxt_cloud_v0.sql`](supabase/migrations/20260411000000_kontxt_cloud_v0.sql)
-
-Config in `~/.kontxt/config.json`:
-
-```json
-{
-  "supabase_url": "https://<project-ref>.supabase.co",
-  "supabase_anon_key": "<anon key>",
-  "supabase_access_token": "<user JWT>"
-}
-```
-
-Commands:
-
-```bash
-kontxt sync status
-kontxt sync push
-kontxt sync push --dry-run
-kontxt sync push --include-private
-```
-
 ## Troubleshooting
 
 If `better-sqlite3` native bindings fail after install:
@@ -349,7 +345,6 @@ The smoke test covers:
 - living file management
 - watch/ingest
 - session start/session end
-- sync status
 - status
 
 ## License

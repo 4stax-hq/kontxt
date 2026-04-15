@@ -2,6 +2,7 @@ import OpenAI from 'openai'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
+import { ensurePrivateDir } from '../security.js'
 
 const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 const TRANSFORMERS_CACHE = path.join(os.homedir(), '.kontxt', 'models')
@@ -92,7 +93,7 @@ async function getTransformersPipeline(): Promise<any> {
     candidates.push('Xenova/paraphrase-MiniLM-L6-v2')
 
     const transformers = await import('@xenova/transformers')
-    fs.mkdirSync(TRANSFORMERS_CACHE, { recursive: true })
+    ensurePrivateDir(TRANSFORMERS_CACHE)
     transformers.env.cacheDir = TRANSFORMERS_CACHE
 
     let lastErr: any = null

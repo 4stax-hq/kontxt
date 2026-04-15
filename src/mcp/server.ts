@@ -5,11 +5,12 @@ import { v4 as uuid } from 'uuid'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { getDb, getAllMemories, insertMemory, incrementAccess, findSimilarMemory, supersedeMemory, deleteMemory, findMemoryByContent } from '../vault/db.js'
+import { getDb, getAllMemories, insertMemory, incrementAccess, findSimilarMemory, supersedeMemory, deleteMemory, findMemoryByContent, resolveMemoryByPrefix } from '../vault/db.js'
 import { embedText } from '../vault/embed.js'
 import type { Memory } from '../types.js'
 import { extractMemoriesFromTranscript } from '../extractor.js'
 import { rankMemories } from '../retrieval.js'
+import { redactSensitiveText } from '../content-policy.js'
 
 type MemoryType = 'preference' | 'fact' | 'project' | 'decision' | 'skill' | 'episodic'
 
@@ -195,10 +196,17 @@ server.tool(
   async (args: any) => {
     const { id } = args
     const db = getDb()
-    const all = getAllMemories(db)
-    const match = all.find(m => m.id.startsWith(id))
+    const { match, ambiguous } = resolveMemoryByPrefix(db, id)
 
     if (!match) {
+      if (ambiguous.length) {
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Ambiguous memory id prefix: ${id}. Matches: ` + ambiguous.map(m => m.id.slice(0, 8)).join(', ')
+          }]
+        }
+      }
       return { content: [{ type: 'text' as const, text: `No memory found with id starting: ${id}` }] }
     }
 
@@ -324,13 +332,20 @@ server.tool(
   async (args: any) => {
     const { content, type, project } = args
     const db = getDb()
-    const exact = findMemoryByContent(db, content)
+    const assessed = redactSensitiveText(content)
+    if (assessed.blocked) {
+      return {
+        content: [{ type: 'text' as const, text: 'Refused to store private key material.' }]
+      }
+    }
+    const safeContent = assessed.value.trim()
+    const exact = findMemoryByContent(db, safeContent)
     if (exact) {
       return {
         content: [{ type: 'text' as const, text: 'Memory already exists: "' + exact.content + '"' }]
       }
     }
-    const { embedding, tier } = await embedText(content)
+    const { embedding, tier } = await embedText(safeContent)
 
     const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
     if (duplicate) {
@@ -340,8 +355,8 @@ server.tool(
       const now = new Date().toISOString()
       insertMemory(db, {
         id: newId,
-        content,
-        summary: content.slice(0, 100),
+        content: safeContent,
+        summary: safeContent.slice(0, 100),
         source: 'ai-captured',
         type: type as MemoryType,
         embedding,
@@ -356,15 +371,15 @@ server.tool(
         accessed_at: now,
       })
       return {
-        content: [{ type: 'text' as const, text: 'Superseded existing memory: "' + content + '"' }]
+        content: [{ type: 'text' as const, text: 'Superseded existing memory: "' + safeContent + '"' }]
       }
     }
 
     const now = new Date().toISOString()
     insertMemory(db, {
       id: uuid(),
-      content,
-      summary: content.slice(0, 100),
+      content: safeContent,
+      summary: safeContent.slice(0, 100),
       source: 'ai-captured',
       type: type as MemoryType,
       embedding,
@@ -380,7 +395,7 @@ server.tool(
     })
 
     return {
-      content: [{ type: 'text' as const, text: 'Stored: "' + content + '"' }]
+      content: [{ type: 'text' as const, text: 'Stored: "' + safeContent + '"' }]
     }
   }
 )

@@ -4,6 +4,7 @@ import path from 'path'
 import os from 'os'
 import { getDb } from '../../vault/db.js'
 import { detectAvailableEmbeddingBackend } from '../../vault/embed.js'
+import { ensurePrivateDir, writePrivateFile } from '../../security.js'
 
 const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 const OLD_VAULT_DIR = path.join(os.homedir(), '.mnemix')
@@ -51,6 +52,7 @@ function upsertMcpServerConfig(mcpConfigPath: string, serverName: string, server
 
 export async function initCommand(options: { key?: string }) {
   const vaultDir = path.join(os.homedir(), '.kontxt')
+  ensurePrivateDir(vaultDir)
   
   console.log(chalk.cyan('\n  kontxt — your AI memory layer\n'))
 
@@ -62,10 +64,10 @@ export async function initCommand(options: { key?: string }) {
       console.log(chalk.green('  ✓ migrated existing vault.db from ~/.mnemix'))
     }
     if (fs.existsSync(OLD_CONFIG_PATH) && !fs.existsSync(CONFIG_PATH)) {
-      const oldConfig = safeReadJson(OLD_CONFIG_PATH)
+        const oldConfig = safeReadJson(OLD_CONFIG_PATH)
       if (oldConfig) {
-        fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true })
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(oldConfig, null, 2))
+        ensurePrivateDir(path.dirname(CONFIG_PATH))
+        writePrivateFile(CONFIG_PATH, JSON.stringify(oldConfig, null, 2))
         console.log(chalk.green('  ✓ migrated existing config.json from ~/.mnemix'))
       }
     }
@@ -82,7 +84,7 @@ export async function initCommand(options: { key?: string }) {
 
   if (options.key) {
     config.openai_api_key = options.key
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
+    writePrivateFile(CONFIG_PATH, JSON.stringify(config, null, 2))
     console.log(chalk.green('  ✓ OpenAI API key saved'))
   }
 

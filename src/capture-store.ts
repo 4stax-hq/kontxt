@@ -3,6 +3,7 @@ import { getDb, insertMemory, findSimilarMemory, supersedeMemory, findMemoryByCo
 import { embedText } from './vault/embed.js'
 import type { MemoryType } from './types.js'
 import type { ExtractedMemory } from './extractor.js'
+import { redactSensitiveText } from './content-policy.js'
 
 export async function storeExtractedMemories(
   extracted: ExtractedMemory[],
@@ -22,12 +23,22 @@ export async function storeExtractedMemories(
       continue
     }
     try {
-      const exact = findMemoryByContent(db, item.content)
+      const assessed = redactSensitiveText(item.content)
+      if (assessed.blocked) {
+        skipped++
+        continue
+      }
+      const safeContent = assessed.value.trim()
+      if (!safeContent) {
+        skipped++
+        continue
+      }
+      const exact = findMemoryByContent(db, safeContent)
       if (exact) {
         skipped++
         continue
       }
-      const { embedding, tier } = await embedText(item.content)
+      const { embedding, tier } = await embedText(safeContent)
       const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
       const now = new Date().toISOString()
 
@@ -36,8 +47,8 @@ export async function storeExtractedMemories(
         supersedeMemory(db, duplicate.id, newId)
         insertMemory(db, {
           id: newId,
-          content: item.content,
-          summary: item.content.slice(0, 100),
+          content: safeContent,
+          summary: safeContent.slice(0, 100),
           source,
           type: item.type as MemoryType,
           embedding,
@@ -56,8 +67,8 @@ export async function storeExtractedMemories(
       } else {
         insertMemory(db, {
           id: uuid(),
-          content: item.content,
-          summary: item.content.slice(0, 100),
+          content: safeContent,
+          summary: safeContent.slice(0, 100),
           source,
           type: item.type as MemoryType,
           embedding,

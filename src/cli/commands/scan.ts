@@ -2,12 +2,9 @@ import chalk from 'chalk'
 import ora from 'ora'
 import fs from 'fs'
 import path from 'path'
-import { v4 as uuid } from 'uuid'
-import { getDb, insertMemory, findSimilarMemory, supersedeMemory, findMemoryByContent } from '../../vault/db.js'
-import { embedText } from '../../vault/embed.js'
 import { extractMemoriesFromTranscript } from '../../extractor.js'
-import type { MemoryType } from '../../types.js'
 import os from 'os'
+import { storeExtractedMemories } from '../../capture-store.js'
 
 const CONFIG_PATH = path.join(os.homedir(), '.kontxt', 'config.json')
 function getConfig(): any {
@@ -111,77 +108,6 @@ function buildProjectContext(dir: string): string {
   return parts.join('\n')
 }
 
-async function storeMemories(
-  extracted: { content: string; type: string }[],
-  project?: string
-): Promise<{ stored: number; updated: number; skipped: number }> {
-  const db = getDb()
-  let stored = 0, updated = 0, skipped = 0
-
-  for (const item of extracted) {
-    if (!item.content || !item.type) { skipped++; continue }
-    try {
-      const exact = findMemoryByContent(db, item.content)
-      if (exact) {
-        skipped++
-        continue
-      }
-      const { embedding, tier } = await embedText(item.content)
-      const duplicate = findSimilarMemory(db, embedding, 0.92, tier)
-
-      if (duplicate) {
-        const newId = uuid()
-        supersedeMemory(db, duplicate.id, newId)
-
-        const now = new Date().toISOString()
-        insertMemory(db, {
-          id: newId,
-          content: item.content,
-          summary: item.content.slice(0, 100),
-          source: 'scanned',
-          type: item.type as MemoryType,
-          embedding,
-          embedding_tier: tier,
-          superseded_by: null,
-          tags: [],
-          project,
-          related_ids: [],
-          privacy_level: 'private',
-          importance_score: 0.8,
-          access_count: 0,
-          created_at: now,
-          accessed_at: now,
-        })
-        console.log(chalk.yellow('  ~ updated  ' + item.content.slice(0, 70)))
-        updated++
-      } else {
-        const now = new Date().toISOString()
-        insertMemory(db, {
-          id: uuid(),
-          content: item.content,
-          summary: item.content.slice(0, 100),
-          source: 'scanned',
-          type: item.type as MemoryType,
-          embedding,
-          embedding_tier: tier,
-          tags: [],
-          project,
-          related_ids: [],
-          privacy_level: 'private',
-          importance_score: 0.8,
-          access_count: 0,
-          created_at: now,
-          accessed_at: now,
-        })
-        console.log(chalk.green('  + ' + '[' + item.type + '] ' + item.content.slice(0, 70)))
-        stored++
-      }
-    } catch { skipped++ }
-  }
-
-  return { stored, updated, skipped }
-}
-
 export async function scanCommand(options: { dir?: string; project?: string }) {
   const dir = path.resolve(options.dir || process.cwd())
   const projectName = options.project || path.basename(dir)
@@ -213,7 +139,11 @@ export async function scanCommand(options: { dir?: string; project?: string }) {
 
   console.log(chalk.cyan('  found ' + extracted.length + ' facts — storing...\n'))
 
-  const { stored, updated, skipped } = await storeMemories(extracted, projectName)
+  const { stored, updated, skipped } = await storeExtractedMemories(extracted, {
+    project: projectName,
+    source: 'scanned',
+    importanceScore: 0.8,
+  })
 
   console.log(chalk.cyan(
     '\n  scan complete: ' + stored + ' stored, ' + updated + ' updated, ' + skipped + ' skipped'

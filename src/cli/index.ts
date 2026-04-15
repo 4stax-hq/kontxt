@@ -23,7 +23,6 @@ import {
   livingTaskCommand,
 } from './commands/living-manage.js'
 import { sessionEndCommand, sessionStartCommand } from './commands/session.js'
-import { syncPushCommand, syncStatusCommand } from './commands/sync.js'
 
 const program = new Command()
 
@@ -168,17 +167,6 @@ living
   .option('-d, --dir <path>', 'repository root (default: cwd)')
   .option('-p, --project <name>', 'project tag for synced memories')
   .action(livingNoteCommand)
-
-const sync = program.command('sync').description('Optional Supabase cloud mirror (see supabase/migrations)')
-
-sync.command('status').description('Show sync configuration state').action(syncStatusCommand)
-
-sync
-  .command('push')
-  .description('Upsert eligible memories to public.kontxt_memories')
-  .option('--include-private', 'also push private memories')
-  .option('--dry-run', 'print counts only; no network writes')
-  .action(syncPushCommand)
 
 const session = program.command('session').description('Cross-provider continuity workflow')
 

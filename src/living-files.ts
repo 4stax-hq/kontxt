@@ -2,6 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import { getDb } from './vault/db.js'
 import { ingestLivingMarkdownFile } from './living-md.js'
+import { redactSensitiveText } from './content-policy.js'
 
 const CONTEXT_TEMPLATE = `---
 kontxt-namespace: wip
@@ -168,9 +169,11 @@ async function ingest(repoRoot: string, absolutePath: string, project?: string) 
 }
 
 export async function setLivingFocus(repoRoot: string, focus: string, project?: string) {
+  const assessed = redactSensitiveText(focus)
+  if (assessed.blocked) throw new Error('Refused to write private key material into CONTEXT.md')
   const target = ensureLivingFile(repoRoot, 'CONTEXT.md')
   let body = fs.readFileSync(target, 'utf-8')
-  body = replaceSection(body, 'Current focus', `- ${focus.trim()}`)
+  body = replaceSection(body, 'Current focus', `- ${assessed.value.trim()}`)
   body = replaceSection(body, 'Updated', `- ${todayIso()}`)
   fs.writeFileSync(target, body.trimEnd() + '\n', 'utf-8')
   await ingest(repoRoot, target, project)
@@ -178,9 +181,11 @@ export async function setLivingFocus(repoRoot: string, focus: string, project?: 
 }
 
 export async function addLivingTask(repoRoot: string, task: string, project?: string) {
+  const assessed = redactSensitiveText(task)
+  if (assessed.blocked) throw new Error('Refused to write private key material into CONTEXT.md')
   const target = ensureLivingFile(repoRoot, 'CONTEXT.md')
   let body = fs.readFileSync(target, 'utf-8')
-  body = appendUniqueBullet(body, 'Active tasks', task.trim(), true)
+  body = appendUniqueBullet(body, 'Active tasks', assessed.value.trim(), true)
   body = replaceSection(body, 'Updated', `- ${todayIso()}`)
   fs.writeFileSync(target, body.trimEnd() + '\n', 'utf-8')
   await ingest(repoRoot, target, project)
@@ -188,8 +193,10 @@ export async function addLivingTask(repoRoot: string, task: string, project?: st
 }
 
 export async function addLivingFact(repoRoot: string, fact: string, project?: string) {
+  const assessed = redactSensitiveText(fact)
+  if (assessed.blocked) throw new Error('Refused to write private key material into FACTS.md')
   const target = ensureLivingFile(repoRoot, 'FACTS.md')
-  const body = appendUniqueBullet(fs.readFileSync(target, 'utf-8'), 'Stable facts', fact.trim())
+  const body = appendUniqueBullet(fs.readFileSync(target, 'utf-8'), 'Stable facts', assessed.value.trim())
   fs.writeFileSync(target, body.trimEnd() + '\n', 'utf-8')
   await ingest(repoRoot, target, project)
   return target
@@ -202,16 +209,29 @@ export async function addLivingDecision(
   context?: string,
   project?: string
 ) {
+  const safeTitle = redactSensitiveText(title)
+  const safeDecision = redactSensitiveText(decision)
+  const safeContext = context ? redactSensitiveText(context) : null
+  if (safeTitle.blocked || safeDecision.blocked || safeContext?.blocked) {
+    throw new Error('Refused to write private key material into DECISIONS.md')
+  }
   const target = ensureLivingFile(repoRoot, 'DECISIONS.md')
-  const body = appendDecision(fs.readFileSync(target, 'utf-8'), title.trim(), decision.trim(), context)
+  const body = appendDecision(
+    fs.readFileSync(target, 'utf-8'),
+    safeTitle.value.trim(),
+    safeDecision.value.trim(),
+    safeContext?.value
+  )
   fs.writeFileSync(target, body.trimEnd() + '\n', 'utf-8')
   await ingest(repoRoot, target, project)
   return target
 }
 
 export async function addLivingTimelineNote(repoRoot: string, text: string, project?: string, date?: string) {
+  const assessed = redactSensitiveText(text)
+  if (assessed.blocked) throw new Error('Refused to write private key material into TIMELINE.md')
   const target = ensureLivingFile(repoRoot, 'TIMELINE.md')
-  const body = appendTimeline(fs.readFileSync(target, 'utf-8'), text.trim(), date || todayIso())
+  const body = appendTimeline(fs.readFileSync(target, 'utf-8'), assessed.value.trim(), date || todayIso())
   fs.writeFileSync(target, body.trimEnd() + '\n', 'utf-8')
   await ingest(repoRoot, target, project)
   return target
