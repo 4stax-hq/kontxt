@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.js.map
+.kontxt/
+*.db
+*.pid
+*.sock
+.env
+config.json
