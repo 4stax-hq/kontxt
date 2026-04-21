@@ -1,0 +1,123 @@
+{
+  "name": "kontxt-vscode",
+  "displayName": "kontxt",
+  "description": "AI memory layer — silent context capture and injection across every session",
+  "version": "0.2.0",
+  "publisher": "4stax",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "ai",
+    "memory",
+    "context",
+    "cursor",
+    "assistant"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "repository": { "type": "git", "url": "https://github.com/4stax-hq/kontxt" },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kontxt",
+          "title": "kontxt",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "kontxt": [
+        {
+          "type": "webview",
+          "id": "kontxt.sidebar",
+          "name": "Context"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "kontxt.refresh",
+        "title": "kontxt: Refresh Context",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "kontxt.addNote",
+        "title": "kontxt: Add Note",
+        "icon": "$(add)"
+      },
+      {
+        "command": "kontxt.init",
+        "title": "kontxt: Initialize Project Context"
+      },
+      {
+        "command": "kontxt.copyContext",
+        "title": "kontxt: Copy Context to Clipboard"
+      },
+      {
+        "command": "kontxt.startDaemon",
+        "title": "kontxt: Start Daemon"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "kontxt.refresh",
+          "when": "view == kontxt.sidebar",
+          "group": "navigation"
+        },
+        {
+          "command": "kontxt.addNote",
+          "when": "view == kontxt.sidebar",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "kontxt",
+      "properties": {
+        "kontxt.anthropicKey": {
+          "type": "string",
+          "default": "",
+          "description": "Anthropic API key for AI extraction (primary). Get one at console.anthropic.com.",
+          "scope": "application"
+        },
+        "kontxt.openaiKey": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI API key for embeddings + deduplication (optional but recommended).",
+          "scope": "application"
+        },
+        "kontxt.autoInit": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically run kontxt init when opening a project with no context."
+        },
+        "kontxt.autoStartDaemon": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the kontxt daemon when VS Code opens."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --target=node18 --sourcemap",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --platform=node --target=node18 --sourcemap --watch",
+    "package": "npx vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.1",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}

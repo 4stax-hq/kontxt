@@ -63,6 +63,15 @@ program
   })
 
 program
+  .command('init')
+  .description('Analyze this repo and seed initial context (1 API call)')
+  .option('-w, --workspace <path>', 'Workspace path (defaults to cwd)')
+  .action(async (opts) => {
+    const { initCommand } = require('./commands/init') as typeof import('./commands/init')
+    await initCommand(opts.workspace ?? process.cwd())
+  })
+
+program
   .command('mcp-server')
   .description('Start the MCP server on stdio (for Cursor/Claude Desktop config)')
   .action(async () => {
