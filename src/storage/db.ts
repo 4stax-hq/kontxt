@@ -38,6 +38,17 @@ CREATE TABLE IF NOT EXISTS sessions (
   entry_count INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS syntheses (
+  id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  content TEXT NOT NULL,
+  entry_snapshot INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_syntheses_scope ON syntheses(scope);
+
 CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -212,4 +223,79 @@ export function getLastSession(db: Database.Database, project: string): Session 
 
 export function incrementAccessCount(db: Database.Database, id: string): void {
   db.prepare('UPDATE entries SET access_count = access_count + 1 WHERE id = ?').run(id)
+}
+
+export interface Synthesis {
+  id: string
+  scope: string
+  content: string
+  entrySnapshot: number
+  createdAt: string
+  expiresAt: string
+}
+
+export function getSynthesis(db: Database.Database, scope: string): Synthesis | null {
+  const now = new Date().toISOString()
+  const row = db.prepare(
+    'SELECT * FROM syntheses WHERE scope = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 1'
+  ).get(scope, now) as Record<string, unknown> | undefined
+  if (!row) return null
+  return {
+    id: row.id as string,
+    scope: row.scope as string,
+    content: row.content as string,
+    entrySnapshot: row.entry_snapshot as number,
+    createdAt: row.created_at as string,
+    expiresAt: row.expires_at as string,
+  }
+}
+
+export function upsertSynthesis(db: Database.Database, scope: string, content: string, entryCount: number): void {
+  const now = new Date()
+  const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+  db.prepare('DELETE FROM syntheses WHERE scope = ?').run(scope)
+  db.prepare(
+    'INSERT INTO syntheses (id, scope, content, entry_snapshot, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(require('uuid').v4(), scope, content, entryCount, now.toISOString(), expires)
+}
+
+export function countActiveEntries(db: Database.Database, project: string): number {
+  const row = db.prepare(
+    'SELECT COUNT(*) as n FROM entries WHERE project = ? AND superseded_by IS NULL'
+  ).get(project) as { n: number }
+  return row?.n ?? 0
+}
+
+export function getCrossProjectEntries(
+  db: Database.Database,
+  excludeProject: string,
+  types?: import('../types').EntryType[]
+): import('../types').Entry[] {
+  let rows: Record<string, unknown>[]
+
+  if (types && types.length > 0) {
+    const placeholders = types.map(() => '?').join(',')
+    rows = db.prepare(`
+      SELECT * FROM entries
+      WHERE project != ?
+        AND project != '__global__'
+        AND scope = 'project'
+        AND superseded_by IS NULL
+        AND type IN (${placeholders})
+      ORDER BY updated_at DESC
+      LIMIT 200
+    `).all(excludeProject, ...types) as Record<string, unknown>[]
+  } else {
+    rows = db.prepare(`
+      SELECT * FROM entries
+      WHERE project != ?
+        AND project != '__global__'
+        AND scope = 'project'
+        AND superseded_by IS NULL
+      ORDER BY updated_at DESC
+      LIMIT 200
+    `).all(excludeProject) as Record<string, unknown>[]
+  }
+
+  return rows.map(entryFromRow)
 }

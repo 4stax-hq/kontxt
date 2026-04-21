@@ -1,5 +1,5 @@
-export type EntryType = 'decision' | 'fact' | 'blocker' | 'progress' | 'focus'
-export type SourceSurface = 'vscode' | 'cursor' | 'browser' | 'cli' | 'ingest' | 'mcp'
+export type EntryType = 'decision' | 'fact' | 'blocker' | 'progress' | 'focus' | 'identity' | 'goal' | 'preference'
+export type SourceSurface = 'vscode' | 'cursor' | 'browser' | 'cli' | 'ingest' | 'mcp' | 'agent-file'
 export type EntryScope = 'project' | 'global'
 export type DedupeAction = 'insert' | 'merge' | 'skip'
 
@@ -54,6 +54,7 @@ export interface Project {
 
 export interface ContextPacket {
   project: string
+  userProfile: string[]        // identity/goal/preference — always injected
   focus: string | null
   blockers: string[]
   recentDecisions: string[]

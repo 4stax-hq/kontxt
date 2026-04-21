@@ -1,11 +1,14 @@
 import type { Entry } from '../types'
 
 const TYPE_PRIORITY: Record<string, number> = {
-  focus: 1.0,
-  blocker: 0.9,
-  decision: 0.8,
-  progress: 0.6,
-  fact: 0.5,
+  identity:   1.0,
+  goal:       1.0,
+  focus:      0.95,
+  blocker:    0.9,
+  decision:   0.8,
+  preference: 0.75,
+  progress:   0.6,
+  fact:       0.5,
 }
 
 export function recencyScore(updatedAt: string): number {

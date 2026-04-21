@@ -36,11 +36,12 @@ program
 program
   .command('note <text>')
   .description('Capture an explicit note (default type: fact)')
-  .option('-t, --type <type>', 'Entry type: decision|fact|blocker|progress|focus', 'fact')
+  .option('-t, --type <type>', 'Entry type: decision|fact|blocker|progress|focus|identity|goal|preference', 'fact')
   .option('-w, --workspace <path>', 'Workspace path')
+  .option('-g, --global', 'Store globally (not tied to a project) — use for identity, goals, preferences')
   .action(async (text: string, opts) => {
     const { noteCommand } = require('./commands/note') as typeof import('./commands/note')
-    await noteCommand(text, opts.type, opts.workspace)
+    await noteCommand(text, opts.type, opts.workspace, opts.global ?? false)
   })
 
 program
@@ -60,6 +61,16 @@ program
   .action(async (file: string | undefined, opts) => {
     const { ingestCommand } = require('./commands/ingest') as typeof import('./commands/ingest')
     await ingestCommand(file, opts.workspace)
+  })
+
+program
+  .command('synthesize')
+  .description('Force-synthesize user profile and project knowledge into narratives')
+  .option('-w, --workspace <path>', 'Workspace path')
+  .option('-p, --project <name>', 'Project name')
+  .action(async (opts) => {
+    const { synthesizeCommand } = require('./commands/synthesize') as typeof import('./commands/synthesize')
+    await synthesizeCommand(opts.workspace ?? process.cwd(), opts.project)
   })
 
 program

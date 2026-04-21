@@ -37,19 +37,28 @@ function writeContextMd(db: Database.Database, project: string, dir: string): vo
   const entries = getAllActiveEntries(db, project)
   const now = new Date().toISOString()
 
-  const focusEntries = entries.filter(e => e.type === 'focus')
-  const blockerEntries = entries.filter(e => e.type === 'blocker').slice(0, 3)
+  const focusEntries    = entries.filter(e => e.type === 'focus')
+  const blockerEntries  = entries.filter(e => e.type === 'blocker').slice(0, 3)
   const decisionEntries = entries.filter(e => e.type === 'decision').slice(0, 5)
-  const factEntries = entries
-    .filter(e => e.type === 'fact')
-    .sort((a, b) => b.accessCount - a.accessCount)
-    .slice(0, 5)
+  const factEntries     = entries.filter(e => e.type === 'fact').sort((a, b) => b.accessCount - a.accessCount).slice(0, 5)
+  const goalEntries     = entries.filter(e => e.type === 'goal').slice(0, 3)
+  const identityEntries = entries.filter(e => e.type === 'identity').slice(0, 2)
 
   const lastSession = getLastSession(db, project)
 
   const focus = focusEntries.length > 0 ? focusEntries[0].content : 'not set'
 
   let md = `# ${project}\n\n`
+
+  if (identityEntries.length > 0 || goalEntries.length > 0) {
+    if (identityEntries.length > 0) {
+      md += `## identity\n${identityEntries.map(e => e.content).join('\n')}\n\n`
+    }
+    if (goalEntries.length > 0) {
+      md += `## goals\n${goalEntries.map(e => `- ${e.content}`).join('\n')}\n\n`
+    }
+  }
+
   md += `## focus\n${focus}\n\n`
 
   md += `## active blockers\n`

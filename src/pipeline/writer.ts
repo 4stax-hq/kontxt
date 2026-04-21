@@ -5,6 +5,7 @@ import { regenerateMdFiles } from '../storage/md-writer'
 import { extractFromText } from './extractor'
 import { classify } from './classifier'
 import { deduplicate } from './deduplicator'
+import { triggerSynthesisIfNeeded } from '../retrieval/engine'
 import type { Config } from '../config'
 import type { RawEvent, Entry } from '../types'
 import { MIN_CONFIDENCE } from '../constants'
@@ -78,6 +79,8 @@ export async function processEvent(
 
   if ((stored > 0 || merged > 0) && lastProject) {
     regenerateMdFiles(db, lastProject, lastWorkspacePath)
+    // Background synthesis — doesn't block the response
+    triggerSynthesisIfNeeded(db, lastProject, config)
   }
 
   return { stored, merged, skipped }
