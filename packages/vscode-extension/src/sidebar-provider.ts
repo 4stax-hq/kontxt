@@ -1,19 +1,38 @@
 import * as vscode from 'vscode'
+import pkg = require('../package.json')
 import {
   parseContextMd, readContextMd, isDaemonRunning, getEntryCount,
-  hasApiKey, isAutoRefreshEnabled, setAutoRefresh, getLastAutoRefresh,
-  getFullConfig, setConfigValue, runKontxtCli,
+  hasApiKey, isAutoRefreshEnabled, isCapturePaused, setAutoRefresh, getLastAutoRefresh,
+  getCliDiagnostics, getFullConfig, getRefreshStatus, setConfigValue, runKontxtCli,
 } from './kontxt-client'
 
 export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = 'kontxt.sidebar'
   private _view?: vscode.WebviewView
   private _workspacePath = ''
+  private _notice: { level: 'error' | 'warn' | 'info'; message: string } | null = null
+  private _activity: { action: 'update' | 'refresh' | 'init' | 'synthesize' | 'note' | 'daemon' | null; message: string } = { action: null, message: '' }
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
 
   setWorkspacePath(p: string) {
     this._workspacePath = p
+  }
+
+  setNotice(level: 'error' | 'warn' | 'info', message: string) {
+    this._notice = { level, message }
+    this.refresh()
+  }
+
+  clearNotice() {
+    if (!this._notice) return
+    this._notice = null
+    this.refresh()
+  }
+
+  setActivity(action: 'update' | 'refresh' | 'init' | 'synthesize' | 'note' | 'daemon' | null, message = '') {
+    this._activity = { action, message }
+    this.refresh()
   }
 
   resolveWebviewView(
@@ -45,14 +64,34 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
           break
         case 'init':
         case 'runReeval':
-          vscode.commands.executeCommand('kontxt.init').then(() => {
-            setTimeout(() => this.refresh(), 2000)
-          })
+          vscode.commands.executeCommand('kontxt.init')
+            .then(() => {
+              setTimeout(() => this.refresh(), 2000)
+            })
+            .catch(err => {
+              this.setActivity(null)
+              this.setNotice('error', `Init command failed: ${err instanceof Error ? err.message : String(err)}`)
+            })
           break
         case 'runRefresh':
-          vscode.commands.executeCommand('kontxt.refresh').then(() => {
-            this.refresh()
-          })
+          vscode.commands.executeCommand('kontxt.refresh')
+            .then(() => {
+              this.refresh()
+            })
+            .catch(err => {
+              this.setActivity(null)
+              this.setNotice('error', `Refresh command failed: ${err instanceof Error ? err.message : String(err)}`)
+            })
+          break
+        case 'runUpdate':
+          vscode.commands.executeCommand('kontxt.update')
+            .then(() => {
+              this.refresh()
+            })
+            .catch(err => {
+              this.setActivity(null)
+              this.setNotice('error', `Update command failed: ${err instanceof Error ? err.message : String(err)}`)
+            })
           break
         case 'toggleAutoRefresh': {
           const current = isAutoRefreshEnabled()
@@ -63,6 +102,30 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
           )
           break
         }
+        case 'toggleCapturePause':
+          vscode.commands.executeCommand('kontxt.toggleCapturePause').catch(err => {
+            this.setActivity(null)
+            this.setNotice('error', `Pause/resume failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
+          break
+        case 'pauseCapture':
+          vscode.commands.executeCommand('kontxt.pauseCapture').catch(err => {
+            this.setActivity(null)
+            this.setNotice('error', `Pause failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
+          break
+        case 'resumeCapture':
+          vscode.commands.executeCommand('kontxt.resumeCapture').catch(err => {
+            this.setActivity(null)
+            this.setNotice('error', `Resume failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
+          break
+        case 'resumeCaptureCatchUp':
+          vscode.commands.executeCommand('kontxt.resumeCaptureCatchUp').catch(err => {
+            this.setActivity(null)
+            this.setNotice('error', `Resume catch-up failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
+          break
         case 'setConfig':
           if (msg.key !== undefined) {
             setConfigValue(msg.key, msg.value)
@@ -70,17 +133,27 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
           }
           break
         case 'synthesize':
-          vscode.commands.executeCommand('kontxt.synthesize')
+          vscode.commands.executeCommand('kontxt.synthesize').catch(err => {
+            this.setActivity(null)
+            this.setNotice('error', `Synthesize command failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
           break
         case 'startDaemon':
-          vscode.commands.executeCommand('kontxt.startDaemon')
+          vscode.commands.executeCommand('kontxt.startDaemon').catch(err => {
+            this.setActivity(null)
+            this.setNotice('error', `Start daemon failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
           setTimeout(() => this.refresh(), 1500)
           break
         case 'openSettings':
-          vscode.commands.executeCommand('workbench.action.openSettings', 'kontxt')
+          vscode.commands.executeCommand('workbench.action.openSettings', 'kontxt').catch(err => {
+            this.setNotice('error', `Open settings failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
           break
         case 'copyContext':
-          vscode.commands.executeCommand('kontxt.copyContext')
+          vscode.commands.executeCommand('kontxt.copyContext').catch(err => {
+            this.setNotice('error', `Copy failed: ${err instanceof Error ? err.message : String(err)}`)
+          })
           break
       }
     })
@@ -100,21 +173,25 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
 
       const md = this._workspacePath ? readContextMd(this._workspacePath) : null
       const daemon = isDaemonRunning()
+      const capturePaused = isCapturePaused()
       const entryCount = this._workspacePath ? getEntryCount(this._workspacePath) : 0
       const autoRefresh = isAutoRefreshEnabled()
       const lastAutoRefresh = this._workspacePath ? getLastAutoRefresh(this._workspacePath) : 0
+      const refreshStatus = this._workspacePath ? getRefreshStatus(this._workspacePath) : null
+      const diagnostics = getCliDiagnostics(pkg.version)
       const config = getFullConfig()
 
       if (!md) {
         this._view.webview.postMessage({
-          type: 'empty', daemon, workspacePath: this._workspacePath, autoRefresh, config,
+          type: 'empty', daemon, capturePaused, workspacePath: this._workspacePath, autoRefresh, config, notice: this._notice, activity: this._activity, diagnostics,
         })
         return
       }
 
       const ctx = parseContextMd(md)
       this._view.webview.postMessage({
-        type: 'context', ctx, daemon, entryCount, autoRefresh, lastAutoRefresh, config,
+        type: 'context', ctx, daemon, capturePaused, entryCount, autoRefresh, lastAutoRefresh, refreshStatus, config, workspacePath: this._workspacePath, notice: this._notice, activity: this._activity,
+        diagnostics,
       })
     } catch (err) {
       this._view.webview.postMessage({ type: 'err', message: String(err) })
@@ -194,6 +271,30 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
       font-size: 10px; font-family: inherit; transition: opacity 0.1s;
     }
     .txt-btn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground); }
+    .split-wrap { position: relative; display: inline-flex; align-items: center; }
+    .split-main {
+      border-top-right-radius: 0; border-bottom-right-radius: 0;
+      margin-right: 0; border-right: 1px solid var(--vscode-widget-border);
+    }
+    .split-toggle {
+      min-width: 18px; padding-left: 4px; padding-right: 4px;
+      border-top-left-radius: 0; border-bottom-left-radius: 0;
+    }
+    .split-menu {
+      position: absolute; top: calc(100% + 4px); right: 0;
+      display: none; min-width: 170px; z-index: 20;
+      background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+      border: 1px solid var(--vscode-widget-border);
+      border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+      padding: 4px;
+    }
+    .split-menu.open { display: block; }
+    .split-item {
+      width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+      color: var(--vscode-foreground); font: inherit; font-size: 11px;
+      padding: 7px 8px; border-radius: 4px;
+    }
+    .split-item:hover { background: var(--vscode-toolbar-hoverBackground); }
     .stats {
       display: flex; flex-wrap: wrap; gap: 8px; padding: 5px 12px;
       border-bottom: 1px solid var(--vscode-widget-border); align-items: center;
@@ -202,34 +303,99 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
     .stat b { color: var(--vscode-foreground); font-weight: 500; }
     .stat.ml { margin-left: auto; }
     .info-bar {
-      padding: 5px 12px; font-size: 11px;
+      padding: 6px 12px; font-size: 11px;
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
     .info-bar.warn    { background: rgba(248,113,113,0.08); border-left: 2px solid #f87171; color: #f87171; }
     .info-bar.caution { background: rgba(251,191,36,0.08);  border-left: 2px solid #fbbf24; color: #fbbf24; }
+    .info-bar.info    { background: rgba(96,165,250,0.08);  border-left: 2px solid #60a5fa; color: #60a5fa; }
     .info-bar-btn {
       background: none; border: 1px solid currentColor; color: inherit;
       border-radius: 3px; padding: 2px 8px; font-size: 10px; cursor: pointer;
       font-family: inherit; white-space: nowrap; flex-shrink: 0;
     }
     .info-bar-btn:hover { background: rgba(255,255,255,0.1); }
+    .runtime {
+      padding: 9px 12px 10px;
+      border-bottom: 1px solid var(--vscode-widget-border);
+      background: linear-gradient(180deg, rgba(128,128,128,0.04), rgba(128,128,128,0.01));
+    }
+    .runtime-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 9px; gap: 8px;
+    }
+    .runtime-title {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--vscode-descriptionForeground);
+    }
+    .runtime-state {
+      font-size: 11px; font-weight: 600;
+    }
+    .runtime-state.ok { color: #4ade80; }
+    .runtime-state.warn { color: #fbbf24; }
+    .runtime-state.off { color: #f87171; }
+    .runtime-list {
+      display: grid; gap: 4px;
+    }
+    .runtime-row {
+      display: grid;
+      grid-template-columns: 84px 1fr;
+      gap: 8px;
+      align-items: start;
+      padding: 2px 0;
+      min-width: 0;
+    }
+    .runtime-k {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--vscode-descriptionForeground); opacity: 0.8;
+    }
+    .runtime-v {
+      font-size: 11px; color: var(--vscode-foreground); line-height: 1.35;
+      word-break: break-word;
+    }
+    .runtime-v.dim { color: var(--vscode-descriptionForeground); }
+    .runtime-v.err { color: #f87171; }
+    .runtime-v.warn { color: #fbbf24; }
+    .runtime-v.ok { color: #4ade80; }
     .actions {
-      display: flex; gap: 4px; padding: 7px 12px;
-      border-bottom: 1px solid var(--vscode-widget-border); flex-wrap: wrap;
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px; padding: 7px 12px;
+      border-bottom: 1px solid var(--vscode-widget-border);
     }
     .abtn {
-      flex: 1; min-width: 60px; padding: 5px 6px;
+      min-width: 0; padding: 6px 6px;
       background: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
       border: none; border-radius: 3px;
       font-size: 11px; font-family: inherit; cursor: pointer;
-      white-space: nowrap; text-align: center;
+      white-space: normal; text-align: center; line-height: 1.2;
+      overflow-wrap: anywhere;
       transition: background 0.1s, opacity 0.1s;
     }
     .abtn:hover    { background: var(--vscode-button-secondaryHoverBackground); }
     .abtn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .abtn.busy {
+      position: relative;
+      opacity: 0.9;
+      cursor: wait;
+      padding-left: 18px;
+    }
+    .abtn.busy::before {
+      content: '';
+      position: absolute;
+      left: 7px;
+      top: 50%;
+      width: 7px;
+      height: 7px;
+      margin-top: -4px;
+      border-radius: 50%;
+      border: 1.5px solid currentColor;
+      border-right-color: transparent;
+      animation: spin 0.7s linear infinite;
+    }
     .abtn.primary  { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
     .abtn.primary:hover { background: var(--vscode-button-hoverBackground); }
+    @keyframes spin { to { transform: rotate(360deg); } }
     .section { border-bottom: 1px solid var(--vscode-widget-border); }
     .sec-hdr {
       display: flex; align-items: center; justify-content: space-between;
@@ -319,6 +485,12 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
 <div id="root"></div>
 <script nonce="${nonce}">
   const vscode = acquireVsCodeApi()
+  const initialState = vscode.getState() || { collapsed: {}, pendingAction: null }
+  let uiState = {
+    collapsed: initialState.collapsed || {},
+    pendingAction: initialState.pendingAction || null,
+  }
+  let lastRender = null
 
   function el(id) { return document.getElementById(id) }
 
@@ -345,11 +517,107 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
     return Date.now() - (typeof ts === 'number' ? ts : new Date(ts).getTime())
   }
 
+  function fmtFuture(ts) {
+    if (!ts) return 'now'
+    const d = ts - Date.now()
+    if (d <= 0) return 'now'
+    const m = Math.ceil(d / 60000)
+    if (m < 60) return 'in ' + m + 'm'
+    const h = Math.floor(m / 60)
+    const rm = m % 60
+    return rm ? ('in ' + h + 'h ' + rm + 'm') : ('in ' + h + 'h')
+  }
+
+  function runtimePanel(opts) {
+    const daemon = !!opts.daemon
+    const capturePaused = opts.capturePaused === true
+    const autoRefresh = opts.autoRefresh !== false
+    const cfg = opts.config || {}
+    const refreshStatus = opts.refreshStatus || null
+    const quiet = cfg.autoRefreshQuietMinutes != null ? cfg.autoRefreshQuietMinutes : 5
+    const cooldown = cfg.autoRefreshCooldownMinutes != null ? cfg.autoRefreshCooldownMinutes : 30
+    const threshold = cfg.autoRefreshMinScore != null ? cfg.autoRefreshMinScore : 3
+    const lastAuto = opts.lastAutoRefresh || 0
+    const workspace = opts.workspacePath || ''
+    const nextEligibleAt = lastAuto ? lastAuto + (cooldown * 60000) : 0
+    let state = { label: 'offline', cls: 'off' }
+    if (!daemon) {
+      state = { label: 'daemon offline', cls: 'off' }
+    } else if (capturePaused) {
+      state = { label: 'capture paused', cls: 'warn' }
+    } else if (!autoRefresh) {
+      state = { label: 'manual mode', cls: 'warn' }
+    } else if (lastAuto && nextEligibleAt > Date.now()) {
+      state = { label: 'cooldown active', cls: 'warn' }
+    } else {
+      state = { label: 'watching for changes', cls: 'ok' }
+    }
+
+    return \`<div class="runtime">
+      <div class="runtime-head">
+        <div class="runtime-title">Runtime Status</div>
+        <div class="runtime-state \${state.cls}">\${state.label}</div>
+      </div>
+      <div class="runtime-list">
+        <div class="runtime-row"><div class="runtime-k">Daemon</div><div class="runtime-v">\${daemon ? 'running' : 'stopped'}</div></div>
+        <div class="runtime-row"><div class="runtime-k">Capture</div><div class="runtime-v">\${capturePaused ? 'paused' : 'live'}</div></div>
+        <div class="runtime-row"><div class="runtime-k">Mode</div><div class="runtime-v">\${autoRefresh ? 'auto' : 'manual'}</div></div>
+        <div class="runtime-row"><div class="runtime-k">Last Auto</div><div class="runtime-v \${lastAuto ? '' : 'dim'}">\${lastAuto ? relTime(lastAuto) : 'never'}</div></div>
+        <div class="runtime-row"><div class="runtime-k">Last Attempt</div><div class="runtime-v \${refreshStatus && refreshStatus.lastAttempt ? '' : 'dim'}">\${refreshStatus && refreshStatus.lastAttempt ? relTime(refreshStatus.lastAttempt) : 'never'}</div></div>
+        <div class="runtime-row"><div class="runtime-k">Next Eligible</div><div class="runtime-v">\${autoRefresh && daemon && !capturePaused ? fmtFuture(nextEligibleAt) : 'blocked'}</div></div>
+        <div class="runtime-row"><div class="runtime-k">Last Outcome</div><div class="runtime-v \${refreshStatus && refreshStatus.lastOutcome === 'error' ? 'err' : refreshStatus && refreshStatus.lastOutcome === 'skipped' ? 'warn' : ''}">\${refreshStatus && refreshStatus.lastOutcome ? esc(refreshStatus.lastOutcome.replace('_', ' ')) : 'none'}</div></div>
+        <div class="runtime-row"><div class="runtime-k">Trigger Window</div><div class="runtime-v">\${quiet}m quiet / \${cooldown}m cooldown</div></div>
+        <div class="runtime-row"><div class="runtime-k">Threshold</div><div class="runtime-v">score >= \${threshold}</div></div>
+        \${refreshStatus && refreshStatus.lastError ? \`<div class="runtime-row"><div class="runtime-k">Last Error</div><div class="runtime-v err">\${esc(refreshStatus.lastError)}</div></div>\` : ''}
+        \${workspace ? \`<div class="runtime-row"><div class="runtime-k">Workspace</div><div class="runtime-v dim">\${esc(workspace)}</div></div>\` : ''}
+      </div>
+    </div>\`
+  }
+
+  function diagnosticsPanel(diagnostics) {
+    if (!diagnostics) return ''
+    const nativeCls = diagnostics.nativeStatus === 'error' ? 'err' : diagnostics.nativeStatus === 'ok' ? 'ok' : 'dim'
+    return \`<div class="section">
+      <div class="sec-hdr" data-toggle-id="diag">
+        <span class="sec-label">Diagnostics</span>
+        <span class="sec-chev col" id="c-diag">&#x203A;</span>
+      </div>
+      <div class="sec-body col" id="b-diag">
+        <div class="runtime-list">
+          <div class="runtime-row"><div class="runtime-k">Extension</div><div class="runtime-v">\${esc(diagnostics.extensionVersion || '')}</div></div>
+          <div class="runtime-row"><div class="runtime-k">CLI Bin</div><div class="runtime-v dim">\${esc(diagnostics.cliBin || '')}</div></div>
+          <div class="runtime-row"><div class="runtime-k">Node Bin</div><div class="runtime-v dim">\${esc(diagnostics.nodeBin || '')}</div></div>
+          <div class="runtime-row"><div class="runtime-k">Node</div><div class="runtime-v">\${esc(diagnostics.nodeVersion || 'unknown')}</div></div>
+          <div class="runtime-row"><div class="runtime-k">ABI</div><div class="runtime-v">\${esc(diagnostics.nodeModulesVersion || 'unknown')}</div></div>
+          <div class="runtime-row"><div class="runtime-k">Native</div><div class="runtime-v \${nativeCls}">\${esc(diagnostics.nativeStatus || 'unknown')}</div></div>
+          <div class="runtime-row"><div class="runtime-k">Native Msg</div><div class="runtime-v \${nativeCls}">\${esc(diagnostics.nativeMessage || 'n/a')}</div></div>
+          <div class="runtime-row"><div class="runtime-k">CLI Root</div><div class="runtime-v dim">\${esc(diagnostics.cliPackageRoot || '')}</div></div>
+        </div>
+      </div>
+    </div>\`
+  }
+
+  function noticeBar(notice) {
+    if (!notice || !notice.message) return ''
+    const cls = notice.level === 'error' ? 'warn' : notice.level === 'warn' ? 'caution' : 'info'
+    return \`<div class="info-bar \${cls}">
+      <span>\${esc(notice.message)}</span>
+      <button class="info-bar-btn" onclick="vscode.postMessage({type:'refresh'})">Reload</button>
+    </div>\`
+  }
+
+  function activityBar(activity) {
+    if (!activity || !activity.action || !activity.message) return ''
+    return \`<div class="info-bar info"><span>\${esc(activity.message)}</span></div>\`
+  }
+
   function toggle(id) {
     const b = el('b-' + id), c = el('c-' + id)
     if (!b || !c) return
     const col = b.classList.toggle('col')
     c.classList.toggle('col', col)
+    uiState.collapsed[id] = col
+    vscode.setState(uiState)
   }
 
   function cfgNum(key, val) {
@@ -365,15 +633,24 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
           return \`<div class="item\${type === 'blocker' ? ' item-warn' : ''}"><div class="item-dot"></div><span class="item-txt">\${esc(t)}</span></div>\`
         }).join('')
     return \`<div class="section">
-      <div class="sec-hdr" onclick="toggle('\${id}')">
+      <div class="sec-hdr" data-toggle-id="\${id}">
         <span class="sec-label">\${label}\${empty ? '' : ' (' + items.length + ')'}</span>
-        <span class="sec-chev" id="c-\${id}">&#x203A;</span>
+        <span class="sec-chev \${uiState.collapsed[id] ? 'col' : ''}" id="c-\${id}">&#x203A;</span>
       </div>
-      <div class="sec-body" id="b-\${id}">\${rows}</div>
+      <div class="sec-body \${uiState.collapsed[id] ? 'col' : ''}" id="b-\${id}">\${rows}</div>
     </div>\`
   }
 
-  function mkHeader(projectName, daemon, arOn) {
+  function mkHeader(projectName, daemon, arOn, capturePaused) {
+    const captureControl = capturePaused
+      ? \`<div class="split-wrap">
+          <button class="txt-btn split-main" data-action="resume-capture" title="Resume from the current state">resume</button>
+          <button class="txt-btn split-toggle" data-action="toggle-resume-menu" title="More resume options">&#x25BE;</button>
+          <div class="split-menu" id="resume-menu">
+            <button class="split-item" data-action="resume-capture-catchup">Resume and catch up missed changes</button>
+          </div>
+        </div>\`
+      : \`<button class="txt-btn" data-action="pause-capture" title="Pause background capture">pause</button>\`
     return \`<div class="header">
       <div class="header-left">
         <div class="status-dot \${daemon ? 'on' : 'off'}" title="\${daemon ? 'Daemon running' : 'Daemon stopped'}"></div>
@@ -382,13 +659,14 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
       <div class="header-right">
         <div class="toggle-wrap" title="\${arOn ? 'Disable' : 'Enable'} auto-refresh">
           <label class="toggle-sw">
-            <input type="checkbox" \${arOn ? 'checked' : ''} onchange="vscode.postMessage({type:'toggleAutoRefresh'})">
+            <input type="checkbox" \${arOn ? 'checked' : ''} data-action="toggle-auto">
             <span class="toggle-slider"></span>
           </label>
           <span class="toggle-label \${arOn ? 'on' : ''}">\${arOn ? 'auto' : 'manual'}</span>
         </div>
-        <button class="txt-btn" onclick="vscode.postMessage({type:'copyContext'})" title="Copy context">copy</button>
-        <button class="txt-btn" onclick="vscode.postMessage({type:'refresh'})" title="Reload">reload</button>
+        \${captureControl}
+        <button class="txt-btn" data-action="copy" title="Copy context">copy</button>
+        <button class="txt-btn" data-action="reload" title="Reload">reload</button>
       </div>
     </div>\`
   }
@@ -398,14 +676,14 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
     const ar = cfg.autoRefresh !== false
     const qm = cfg.autoRefreshQuietMinutes    != null ? cfg.autoRefreshQuietMinutes    : 5
     const cd = cfg.autoRefreshCooldownMinutes != null ? cfg.autoRefreshCooldownMinutes : 30
-    const ms = cfg.autoRefreshMinScore        != null ? cfg.autoRefreshMinScore        : 4
+    const ms = cfg.autoRefreshMinScore        != null ? cfg.autoRefreshMinScore        : 3
     const mt = cfg.maxContextTokens           != null ? cfg.maxContextTokens           : 800
     return \`<div class="section">
-      <div class="sec-hdr" onclick="toggle('cfg')">
+      <div class="sec-hdr" data-toggle-id="cfg">
         <span class="sec-label">Settings</span>
-        <span class="sec-chev col" id="c-cfg">&#x203A;</span>
+        <span class="sec-chev \${uiState.collapsed.cfg !== false ? 'col' : ''}" id="c-cfg">&#x203A;</span>
       </div>
-      <div class="sec-body col" id="b-cfg">
+      <div class="sec-body \${uiState.collapsed.cfg !== false ? 'col' : ''}" id="b-cfg">
         <div class="cfg-div">Auto-refresh</div>
         <div class="cfg-row">
           <div class="cfg-lbl">
@@ -413,7 +691,7 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
             <div class="cfg-hint">Update context on code changes</div>
           </div>
           <label class="toggle-sw">
-            <input type="checkbox" \${ar ? 'checked' : ''} onchange="vscode.postMessage({type:'toggleAutoRefresh'})">
+            <input type="checkbox" \${ar ? 'checked' : ''} data-action="toggle-auto">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -458,19 +736,22 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
     </div>\`
   }
 
-  function renderContext(ctx, daemon, entryCount, autoRefresh, lastAutoRefresh, config) {
+  function renderContext(ctx, daemon, capturePaused, entryCount, autoRefresh, lastAutoRefresh, refreshStatus, config, workspacePath, notice, activity, diagnostics) {
     const arOn    = autoRefresh !== false
     const lastStr = lastAutoRefresh ? relTime(lastAutoRefresh) : 'never'
     const stale   = ctx.updatedAt && ageMs(ctx.updatedAt) > 3 * 86400000
 
     const staleBar = stale ? \`<div class="info-bar warn">
       <span>Context is \${relTime(ctx.updatedAt)} old</span>
-      <button class="info-bar-btn" onclick="runReeval()">Re-evaluate</button>
+      <button class="info-bar-btn" onclick="runReeval()">Full Scan</button>
     </div>\` : ''
 
     const daemonBar = !daemon ? \`<div class="info-bar caution">
       <span>Daemon offline</span>
       <button class="info-bar-btn" onclick="vscode.postMessage({type:'startDaemon'})">Start</button>
+    </div>\` : capturePaused ? \`<div class="info-bar caution">
+      <span>Background capture paused</span>
+      <button class="info-bar-btn" onclick="vscode.postMessage({type:'toggleCapturePause'})">Resume</button>
     </div>\` : ''
 
     const statsRow = \`<div class="stats">
@@ -481,18 +762,20 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
       <div class="stat ml">auto <b>\${lastStr}</b></div>
     </div>\`
 
+    const busy = uiState.pendingAction || (activity && activity.action ? activity.action : '')
     const actions = \`<div class="actions">
-      <button class="abtn primary" id="btn-refresh" onclick="runRefresh()" title="Scan recently changed files">Refresh</button>
-      <button class="abtn" id="btn-reeval" onclick="runReeval()" title="Full repo scan">Re-evaluate</button>
-      <button class="abtn" onclick="runSynthesize()" title="Rebuild narrative from stored entries">Synthesize</button>
+      <button class="abtn primary \${busy === 'update' ? 'busy' : ''}" id="btn-update" data-action="run-update" title="Cheap incremental update from a few changes" \${busy ? 'disabled' : ''}>\${busy === 'update' ? 'Updating...' : 'Update'}</button>
+      <button class="abtn \${busy === 'refresh' ? 'busy' : ''}" id="btn-refresh" data-action="run-refresh" title="Broader recent-change refresh" \${busy ? 'disabled' : ''}>\${busy === 'refresh' ? 'Refreshing...' : 'Refresh'}</button>
+      <button class="abtn \${busy === 'init' ? 'busy' : ''}" id="btn-reeval" data-action="run-reeval" title="Full repo scan" \${busy ? 'disabled' : ''}>\${busy === 'init' ? 'Scanning...' : 'Full Scan'}</button>
+      <button class="abtn \${busy === 'synthesize' ? 'busy' : ''}" id="btn-synth" data-action="run-synthesize" title="Rebuild narrative from stored entries" \${busy ? 'disabled' : ''}>\${busy === 'synthesize' ? 'Synthesizing...' : 'Synthesize'}</button>
     </div>\`
 
     const focusSection = \`<div class="section">
-      <div class="sec-hdr" onclick="toggle('focus')">
+      <div class="sec-hdr" data-toggle-id="focus">
         <span class="sec-label">Current Focus</span>
-        <span class="sec-chev" id="c-focus">&#x203A;</span>
+        <span class="sec-chev \${uiState.collapsed.focus ? 'col' : ''}" id="c-focus">&#x203A;</span>
       </div>
-      <div class="sec-body" id="b-focus">
+      <div class="sec-body \${uiState.collapsed.focus ? 'col' : ''}" id="b-focus">
         \${ctx.focus ? \`<div class="focus-val">\${esc(ctx.focus)}</div>\` : '<div class="focus-nil">not set</div>'}
       </div>
     </div>\`
@@ -507,38 +790,45 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
         <option value="focus">focus</option>
       </select>
       <textarea id="ntxt" placeholder="Be specific — rationale for decisions, exact names for facts..." rows="3"></textarea>
-      <button class="rec-btn" id="rec-btn" onclick="submitNote()">Record <span style="opacity:0.4;font-size:10px">Cmd+Enter</span></button>
+      <button class="rec-btn" id="rec-btn" data-action="submit-note">Record <span style="opacity:0.4;font-size:10px">Cmd+Enter</span></button>
     </div>\`
 
-    el('root').innerHTML = mkHeader(ctx.project, daemon, arOn)
-      + statsRow + staleBar + daemonBar + actions + focusSection
+    el('root').innerHTML = mkHeader(ctx.project, daemon, arOn, capturePaused)
+      + statsRow + noticeBar(notice) + activityBar(activity)
+      + runtimePanel({ daemon, capturePaused, autoRefresh, lastAutoRefresh, refreshStatus, config, workspacePath })
+      + staleBar + daemonBar + actions + focusSection
       + section('blk', 'Active Blockers', ctx.blockers, 'blocker')
       + section('dec', 'Decisions',       ctx.decisions, 'decision')
       + section('fct', 'Key Facts',       ctx.facts,     'fact')
-      + addNote + settingsPanel(config)
+      + addNote + settingsPanel(config) + diagnosticsPanel(diagnostics)
 
     const ta = el('ntxt')
     if (ta) ta.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitNote()
     })
+    bindSectionToggles()
   }
 
-  function renderEmpty(daemon, workspacePath, autoRefresh, config) {
+  function renderEmpty(daemon, capturePaused, workspacePath, autoRefresh, config, notice, activity, diagnostics) {
     const has  = !!workspacePath
     const arOn = autoRefresh !== false
 
     const body = has ? \`<div class="empty-state">
       <div class="empty-title">No context yet</div>
       <div class="empty-desc">Initialize to capture your stack, decisions, and current focus.</div>
-      <button class="abtn primary full-btn" id="btn-init" onclick="runInit()">Initialize project</button>
-      <button class="abtn full-btn" id="btn-ref-e" onclick="runRefresh()">Refresh from recent changes</button>
-      <div class="empty-hint">Init: full repo scan &nbsp;·&nbsp; Refresh: only what changed recently</div>
+      <button class="abtn primary full-btn" id="btn-init" data-action="run-init">Initialize project</button>
+      <button class="abtn full-btn" id="btn-upd-e" data-action="run-update">Update from a few changes</button>
+      <button class="abtn full-btn" id="btn-ref-e" data-action="run-refresh">Refresh from recent changes</button>
+      <div class="empty-hint">Update: cheap incremental delta &nbsp;·&nbsp; Refresh: broader recent-change scan &nbsp;·&nbsp; Init: full repo scan</div>
     </div>\` : \`<div class="empty-state">
       <div class="empty-title">No context yet</div>
       <div class="empty-desc">Open a workspace folder to get started.</div>
     </div>\`
-
-    el('root').innerHTML = mkHeader('kontxt', daemon, arOn) + body + settingsPanel(config)
+    el('root').innerHTML = mkHeader('kontxt', daemon, arOn, capturePaused)
+      + noticeBar(notice) + activityBar(activity)
+      + runtimePanel({ daemon, capturePaused, autoRefresh, lastAutoRefresh: 0, refreshStatus: null, config, workspacePath })
+      + body + settingsPanel(config) + diagnosticsPanel(diagnostics)
+    bindSectionToggles()
   }
 
   function renderSetup() {
@@ -546,31 +836,122 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
       <div class="setup-title">Set up kontxt</div>
       <div class="setup-desc">Add your Anthropic API key to start capturing context automatically.</div>
       <div class="setup-code">VS Code Settings &rsaquo; search "kontxt" &rsaquo; paste key</div>
-      <button class="abtn primary" onclick="vscode.postMessage({type:'openSettings'})" style="width:100%;margin-bottom:10px">Open Settings</button>
+      <button class="abtn primary" data-action="open-settings" style="width:100%;margin-bottom:10px">Open Settings</button>
       <div class="setup-desc" style="font-size:11px">Get a key at console.anthropic.com &mdash; Haiku is &lt;$1/month for typical use.</div>
     </div>\`
+    bindActionButtons()
   }
 
   function runInit() {
-    const b = el('btn-init')
-    if (b) { b.disabled = true; b.textContent = 'Analyzing...' }
+    uiState.pendingAction = 'init'
+    vscode.setState(uiState)
     vscode.postMessage({ type: 'init' })
   }
 
   function runRefresh() {
-    const b = el('btn-refresh') || el('btn-ref-e')
-    if (b) { b.disabled = true; b.textContent = 'Scanning...' }
+    uiState.pendingAction = 'refresh'
+    vscode.setState(uiState)
     vscode.postMessage({ type: 'runRefresh' })
   }
 
+  function runUpdate() {
+    uiState.pendingAction = 'update'
+    vscode.setState(uiState)
+    vscode.postMessage({ type: 'runUpdate' })
+  }
+
+  function toggleResumeMenu() {
+    const menu = el('resume-menu')
+    if (!menu) return
+    menu.classList.toggle('open')
+  }
+
+  function closeResumeMenu() {
+    const menu = el('resume-menu')
+    if (!menu) return
+    menu.classList.remove('open')
+  }
+
   function runReeval() {
-    const b = el('btn-reeval')
-    if (b) { b.disabled = true; b.textContent = 'Analyzing...' }
+    uiState.pendingAction = 'init'
+    vscode.setState(uiState)
     vscode.postMessage({ type: 'runReeval' })
   }
 
   function runSynthesize() {
+    uiState.pendingAction = 'synthesize'
+    vscode.setState(uiState)
     vscode.postMessage({ type: 'synthesize' })
+  }
+
+  function bindSectionToggles() {
+    document.querySelectorAll('.sec-hdr[data-toggle-id]').forEach(function(node) {
+      if (!(node instanceof HTMLElement)) return
+      if (node.dataset.bound === '1') return
+      node.dataset.bound = '1'
+      node.addEventListener('click', function() {
+        const id = node.dataset.toggleId
+        if (id) toggle(id)
+      })
+    })
+  }
+
+  function bindActionButtons() {
+    document.querySelectorAll('[data-action]').forEach(function(node) {
+      if (!(node instanceof HTMLElement)) return
+      if (node.dataset.boundAction === '1') return
+      node.dataset.boundAction = '1'
+      node.addEventListener('click', function() {
+        const action = node.dataset.action
+        if (action === 'copy') vscode.postMessage({ type: 'copyContext' })
+        else if (action === 'reload') vscode.postMessage({ type: 'refresh' })
+        else if (action === 'toggle-auto') vscode.postMessage({ type: 'toggleAutoRefresh' })
+        else if (action === 'pause-capture') vscode.postMessage({ type: 'pauseCapture' })
+        else if (action === 'resume-capture') { closeResumeMenu(); vscode.postMessage({ type: 'resumeCapture' }) }
+        else if (action === 'resume-capture-catchup') { closeResumeMenu(); vscode.postMessage({ type: 'resumeCaptureCatchUp' }) }
+        else if (action === 'toggle-resume-menu') toggleResumeMenu()
+        else if (action === 'run-update') runUpdate()
+        else if (action === 'run-refresh') runRefresh()
+        else if (action === 'run-reeval') runReeval()
+        else if (action === 'run-synthesize') runSynthesize()
+        else if (action === 'run-init') runInit()
+        else if (action === 'submit-note') submitNote()
+        else if (action === 'open-settings') vscode.postMessage({ type: 'openSettings' })
+      })
+    })
+  }
+
+  function rerender() {
+    if (!lastRender) return
+    if (lastRender.type === 'context') {
+      renderContext(
+        lastRender.ctx,
+        lastRender.daemon,
+        lastRender.capturePaused,
+        lastRender.entryCount,
+        lastRender.autoRefresh,
+        lastRender.lastAutoRefresh,
+        lastRender.refreshStatus,
+        lastRender.config,
+        lastRender.workspacePath,
+        lastRender.notice,
+        lastRender.activity,
+        lastRender.diagnostics,
+      )
+    } else if (lastRender.type === 'empty') {
+      renderEmpty(
+        lastRender.daemon,
+        lastRender.capturePaused,
+        lastRender.workspacePath,
+        lastRender.autoRefresh,
+        lastRender.config,
+        lastRender.notice,
+        lastRender.activity,
+        lastRender.diagnostics,
+      )
+    } else if (lastRender.type === 'setup') {
+      renderSetup()
+    }
   }
 
   function submitNote() {
@@ -580,6 +961,9 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
     if (!text) return
     const b = el('rec-btn')
     if (b) b.disabled = true
+    uiState.pendingAction = 'note'
+    vscode.setState(uiState)
+    rerender()
     vscode.postMessage({ type: 'addNote', text: text, entryType: type })
     if (ta) ta.value = ''
     if (b) setTimeout(function() { b.disabled = false }, 1200)
@@ -587,15 +971,32 @@ export class KontxtSidebarProvider implements vscode.WebviewViewProvider {
 
   window.addEventListener('message', function(e) {
     const msg = e.data
+    uiState.pendingAction = msg.activity && msg.activity.action ? msg.activity.action : null
+    vscode.setState(uiState)
     if (msg.type === 'context') {
-      renderContext(msg.ctx, msg.daemon, msg.entryCount, msg.autoRefresh, msg.lastAutoRefresh, msg.config)
+      lastRender = msg
+      renderContext(msg.ctx, msg.daemon, msg.capturePaused, msg.entryCount, msg.autoRefresh, msg.lastAutoRefresh, msg.refreshStatus, msg.config, msg.workspacePath, msg.notice, msg.activity, msg.diagnostics)
+      bindActionButtons()
     } else if (msg.type === 'empty') {
-      renderEmpty(msg.daemon, msg.workspacePath, msg.autoRefresh, msg.config)
+      lastRender = msg
+      renderEmpty(msg.daemon, msg.capturePaused, msg.workspacePath, msg.autoRefresh, msg.config, msg.notice, msg.activity, msg.diagnostics)
+      bindActionButtons()
     } else if (msg.type === 'setup') {
+      lastRender = { type: 'setup' }
       renderSetup()
     } else if (msg.type === 'err') {
+      uiState.pendingAction = null
+      vscode.setState(uiState)
+      lastRender = null
       el('root').innerHTML = \`<div class="err-box"><b>kontxt error</b><br>\${esc(msg.message)}<br><br><button onclick="vscode.postMessage({type:'refresh'})" style="cursor:pointer;padding:3px 10px">Retry</button></div>\`
     }
+  })
+
+  document.addEventListener('click', function(e) {
+    const target = e.target
+    if (!(target instanceof HTMLElement)) return
+    if (target.closest('.split-wrap')) return
+    closeResumeMenu()
   })
 
   vscode.postMessage({ type: 'webviewReady' })

@@ -18,6 +18,24 @@ program
   })
 
 program
+  .command('pause')
+  .description('Pause background capture and drop any pending automatic work')
+  .action(() => {
+    const { pauseCommand } = require('./commands/pause') as typeof import('./commands/pause')
+    pauseCommand()
+  })
+
+program
+  .command('resume')
+  .description('Resume background capture from the current workspace state')
+  .option('-w, --workspace <path>', 'Workspace path (defaults to cwd)')
+  .option('--catch-up', 'Resume and process missed changes from the paused interval')
+  .action(async (opts) => {
+    const { resumeCommand } = require('./commands/resume') as typeof import('./commands/resume')
+    await resumeCommand({ workspacePath: opts.workspace ?? process.cwd(), catchUp: opts.catchUp === true })
+  })
+
+program
   .command('stop')
   .description('Stop the running daemon')
   .action(() => {
@@ -83,15 +101,33 @@ program
   })
 
 program
+  .command('update')
+  .description('Apply a cheap incremental context update from the latest meaningful changes')
+  .option('-w, --workspace <path>', 'Workspace path (defaults to cwd)')
+  .option('--hours <n>', 'Look back N hours for modified files (default: 24)', '24')
+  .action(async (opts) => {
+    const { refreshCommand } = require('./commands/refresh') as typeof import('./commands/refresh')
+    const workspacePath = opts.workspace ?? process.cwd()
+    console.log(`Scanning for a small incremental update in the last ${opts.hours}h...`)
+    const stored = await refreshCommand(workspacePath, undefined, { incremental: true, lookbackHours: Number(opts.hours) })
+    if (stored > 0) {
+      console.log(`\nUpdated: ${stored} new entries`)
+      console.log(`Context file: ${workspacePath}/.kontxt/CONTEXT.md`)
+    } else {
+      console.log('No high-value incremental update found.')
+    }
+  })
+
+program
   .command('refresh')
-  .description('Extract knowledge from recently modified files (1 API call, run after agent sessions)')
+  .description('Extract knowledge from recently modified files with a broader recent-change scan')
   .option('-w, --workspace <path>', 'Workspace path (defaults to cwd)')
   .option('--hours <n>', 'Look back N hours for modified files (default: 24)', '24')
   .action(async (opts) => {
     const { refreshCommand } = require('./commands/refresh') as typeof import('./commands/refresh')
     const workspacePath = opts.workspace ?? process.cwd()
     console.log(`Scanning for changes in the last ${opts.hours}h...`)
-    const stored = await refreshCommand(workspacePath)
+    const stored = await refreshCommand(workspacePath, undefined, { incremental: false, lookbackHours: Number(opts.hours) })
     if (stored > 0) {
       console.log(`\nRefreshed: ${stored} new entries`)
       console.log(`Context file: ${workspacePath}/.kontxt/CONTEXT.md`)

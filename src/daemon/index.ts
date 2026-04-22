@@ -27,6 +27,14 @@ const workspaceWatchers = new Map<string, () => void>()
 
 async function drainQueue(db: ReturnType<typeof getDb>, config: ReturnType<typeof loadConfig>): Promise<void> {
   if (processing || queue.length === 0) return
+  const liveConfig = loadConfig()
+  if (liveConfig.capturePaused === true) {
+    if (queue.length > 0) {
+      console.log(`[daemon] capture paused: dropped ${queue.length} pending item(s)`)
+      queue.length = 0
+    }
+    return
+  }
   processing = true
   while (queue.length > 0) {
     const item = queue.shift()!
@@ -50,6 +58,7 @@ function startWorkspaceWatchers(
   if (!agentWatchers.has(wp)) {
     try {
       const stop = watchAgentFiles(wp, (change) => {
+        if (loadConfig().capturePaused === true) return
         const sessionId = getActiveSessionId(wp)
         const event: RawEvent = {
           text: change.content,
@@ -69,11 +78,12 @@ function startWorkspaceWatchers(
     try {
       const stop = watchWorkspace(wp, () => loadConfig(), async ({ changedFiles }) => {
         if (changedFiles.length === 0) return
+        if (loadConfig().capturePaused === true) return
         console.log(`[daemon] workspace batch: ${changedFiles.length} files changed in ${wp}`)
 
         // One API call for the whole batch
         const { refreshCommand } = await import('../cli/commands/refresh')
-        const stored = await refreshCommand(wp, changedFiles)
+        const stored = await refreshCommand(wp, changedFiles, { auto: true, incremental: true })
         console.log(`[daemon] workspace refresh: +${stored} new entries`)
       })
       workspaceWatchers.set(wp, stop)
@@ -132,8 +142,14 @@ export async function startDaemon(): Promise<void> {
     startWorkspaceWatchers(wp, db, config)
   }
 
+  const initialWorkspace = process.env.KONTXT_WORKSPACE
+  if (initialWorkspace) {
+    startWorkspaceWatchers(initialWorkspace, db, config)
+  }
+
   eventBus.onEvent(async (daemonEvent: DaemonEvent) => {
     if (daemonEvent.type === 'raw_event') {
+      if (loadConfig().capturePaused === true) return
       const event = daemonEvent.payload as RawEvent
       const workspaceKey = event.workspacePath ?? event.projectName ?? 'default'
       const sessionId = getActiveSessionId(workspaceKey)

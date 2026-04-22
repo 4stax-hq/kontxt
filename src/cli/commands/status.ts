@@ -1,4 +1,5 @@
 import * as fs from 'fs'
+import { loadConfig } from '../../config'
 import { PID_PATH } from '../../constants'
 import { getDb } from '../../storage/db'
 
@@ -18,6 +19,7 @@ export function statusCommand(): void {
   }
 
   console.log(`Daemon: ${daemonRunning ? `running (PID ${daemonPid})` : 'not running'}`)
+  console.log(`Capture: ${loadConfig().capturePaused ? 'paused' : 'live'}`)
 
   try {
     const db = getDb()

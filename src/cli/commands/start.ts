@@ -11,7 +11,13 @@ export function startCommand(workspacePath?: string): void {
       console.log(`Daemon already running (PID ${pid})`)
       return
     } catch {
-      fs.unlinkSync(PID_PATH)
+      // Stale PID files should never block startup. The daemon rewrites this file on boot.
+      try {
+        fs.rmSync(PID_PATH, { force: true })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        console.warn(`Ignoring stale daemon PID cleanup failure: ${message}`)
+      }
     }
   }
 

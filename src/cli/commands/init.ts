@@ -5,6 +5,7 @@ import { getDb } from '../../storage/db'
 import { loadConfig, ensureKontxtDir } from '../../config'
 import type { RawEvent } from '../../types'
 import { readExistingAgentFiles } from '../../daemon/agent-watcher'
+import { prepareLlmInput, resolveAnthropicModel, shouldSkipLlmCall } from '../../llm/guards'
 
 // ─── file walker ─────────────────────────────────────────────────────────────
 
@@ -310,6 +311,11 @@ export async function initCommand(workspacePath: string): Promise<void> {
   }
 
   console.log('Analyzing repository...')
+  const prepared = prepareLlmInput('init', summary)
+  if (shouldSkipLlmCall(prepared.text, 200)) {
+    console.log('Repository summary was too small to justify a paid init call.')
+    return
+  }
 
   let items: Array<{ type: string; content: string; confidence: number }> = []
 
@@ -318,10 +324,10 @@ export async function initCommand(workspacePath: string): Promise<void> {
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const client = new Anthropic({ apiKey: config.anthropicKey })
       const response = await client.messages.create({
-        model: config.extractionModel ?? 'claude-haiku-4-5-20251001',
-        max_tokens: 2500,
+        model: resolveAnthropicModel(config.extractionModel),
+        max_tokens: prepared.maxOutputTokens,
         system: INIT_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: summary }],
+        messages: [{ role: 'user', content: prepared.text }],
       })
       const content = response.content[0]
       if (content.type === 'text') items = parseItems(content.text)
@@ -337,9 +343,9 @@ export async function initCommand(workspacePath: string): Promise<void> {
         model: 'gpt-4o-mini',
         messages: [
           { role: 'system', content: INIT_SYSTEM_PROMPT },
-          { role: 'user', content: summary },
+          { role: 'user', content: prepared.text },
         ],
-        max_tokens: 2500,
+        max_tokens: prepared.maxOutputTokens,
       })
       items = parseItems(response.choices[0]?.message?.content ?? '')
     } catch (err) {

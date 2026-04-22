@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import type { Config } from '../config'
+import { getLastAutoRefresh, markRefreshTriggered } from '../refresh-state'
 
 const TRACK_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
@@ -50,28 +51,6 @@ function fileSignificance(filePath: string): number {
 
 // ─── cooldown state ───────────────────────────────────────────────────────────
 
-const STATE_FILE = path.join(
-  require('os').homedir(), '.kontxt', 'refresh-state.json'
-)
-
-interface RefreshState {
-  workspaces: Record<string, number>  // workspace → last fire timestamp ms
-}
-
-function readState(): RefreshState {
-  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8')) } catch { return { workspaces: {} } }
-}
-
-function writeLastFire(workspacePath: string): void {
-  const state = readState()
-  state.workspaces[workspacePath] = Date.now()
-  try { fs.writeFileSync(STATE_FILE, JSON.stringify(state)) } catch {}
-}
-
-export function getLastAutoRefresh(workspacePath: string): number {
-  return readState().workspaces[workspacePath] ?? 0
-}
-
 function isCoolingDown(workspacePath: string, cooldownMs: number): boolean {
   return Date.now() - getLastAutoRefresh(workspacePath) < cooldownMs
 }
@@ -113,6 +92,11 @@ export function watchWorkspace(
   function tryFire() {
     const cfg = getConfig()
 
+    if (cfg.capturePaused === true) {
+      pendingChanges.clear()
+      return
+    }
+
     if (cfg.autoRefresh === false) {
       // Auto-refresh disabled — keep accumulating changes but don't fire
       return
@@ -129,7 +113,10 @@ export function watchWorkspace(
     }
 
     const totalScore = [...pendingChanges.values()].reduce((a, b) => a + b, 0)
-    if (totalScore < minScore) {
+    const maxScore = Math.max(0, ...pendingChanges.values())
+    const fileCount = pendingChanges.size
+    const shouldFire = totalScore >= minScore || maxScore >= 3 || fileCount >= 3
+    if (!shouldFire) {
       console.log(`[watcher] ${path.basename(workspacePath)}: score ${totalScore} < threshold ${minScore}, skipping`)
       pendingChanges.clear()
       return
@@ -138,7 +125,7 @@ export function watchWorkspace(
     const changedFiles = [...pendingChanges.keys()].map(f => path.relative(workspacePath, f))
     pendingChanges.clear()
 
-    writeLastFire(workspacePath)
+    markRefreshTriggered(workspacePath)
     onBatch({ workspacePath, changedFiles })
   }
 
@@ -153,6 +140,12 @@ export function watchWorkspace(
 
     fileHashes.set(filePath, hash)
 
+    const cfg = getConfig()
+    if (cfg.capturePaused === true) {
+      pendingChanges.delete(filePath)
+      return
+    }
+
     const score = fileSignificance(filePath)
     if (score > 0) {
       pendingChanges.set(filePath, Math.max(pendingChanges.get(filePath) ?? 0, score))
@@ -160,7 +153,6 @@ export function watchWorkspace(
 
     // Reset quiet-period debounce on every real change
     if (debounceTimer) clearTimeout(debounceTimer)
-    const cfg = getConfig()
     const quietMs = (cfg.autoRefreshQuietMinutes ?? 5) * 60 * 1000
     debounceTimer = setTimeout(tryFire, quietMs)
   }
@@ -213,24 +205,31 @@ export function watchWorkspace(
 }
 
 // Build a compact summary of changed files for the LLM — head+tail truncation
-export function buildChangeSummary(workspacePath: string, changedFiles: string[]): string {
+export function buildChangeSummary(
+  workspacePath: string,
+  changedFiles: string[],
+  options?: { compact?: boolean }
+): string {
+  const compact = options?.compact === true
   const parts: string[] = [`Changed files:\n${changedFiles.join('\n')}`, '']
-  let budget = 10000
+  let budget = compact ? 2800 : 10000
 
   // Sort by significance so high-signal files get more of the budget
   const sorted = changedFiles
     .map(rel => ({ rel, score: fileSignificance(path.join(workspacePath, rel)) }))
     .sort((a, b) => b.score - a.score)
 
-  for (const { rel } of sorted) {
+  const selected = compact ? sorted.slice(0, 4) : sorted
+
+  for (const { rel } of selected) {
     if (budget <= 0) break
     const full = path.join(workspacePath, rel)
     if (!fs.existsSync(full)) continue
     try {
       let content = fs.readFileSync(full, 'utf-8')
-      const cap = Math.min(1800, budget)
+      const cap = Math.min(compact ? 550 : 1800, budget)
       if (content.length > cap) {
-        const head = Math.floor(cap * 0.3)
+        const head = Math.floor(cap * (compact ? 0.5 : 0.3))
         content = content.slice(0, head) + '\n...\n' + content.slice(-(cap - head))
       }
       parts.push(`--- ${rel} ---\n${content}`)

@@ -3,6 +3,7 @@ import type { Database } from '../storage/db'
 import { insertSession, updateSessionEnd, getAllActiveEntries } from '../storage/db'
 import type { Config } from '../config'
 import type { Session } from '../types'
+import { prepareLlmInput, resolveAnthropicModel, shouldSkipLlmCall } from '../llm/guards'
 
 const activeSessions = new Map<string, { session: Session; entryCount: number }>()
 
@@ -67,15 +68,19 @@ async function generateSessionSummary(
     .join('\n')
 
   const prompt = `Summarize this development session in 2-3 sentences. Focus on what was accomplished, what was decided, and what problems were encountered. Be specific.\n\nEntries:\n${entryText}`
+  const prepared = prepareLlmInput('session', prompt)
+  if (shouldSkipLlmCall(prepared.text, 120)) {
+    return `Session captured ${sessionEntries.length} entries for project ${project}.`
+  }
 
   if (config.anthropicKey) {
     try {
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const client = new Anthropic({ apiKey: config.anthropicKey })
       const response = await client.messages.create({
-        model: config.extractionModel ?? 'claude-3-haiku-20240307',
-        max_tokens: 256,
-        messages: [{ role: 'user', content: prompt }],
+        model: resolveAnthropicModel(config.extractionModel),
+        max_tokens: prepared.maxOutputTokens,
+        messages: [{ role: 'user', content: prepared.text }],
       })
       const content = response.content[0]
       if (content.type === 'text') return content.text
@@ -90,8 +95,8 @@ async function generateSessionSummary(
       const client = new OpenAI({ apiKey: config.openaiKey })
       const response = await client.chat.completions.create({
         model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 256,
+        messages: [{ role: 'user', content: prepared.text }],
+        max_tokens: prepared.maxOutputTokens,
       })
       return response.choices[0]?.message?.content ?? null
     } catch (err) {

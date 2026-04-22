@@ -2,7 +2,7 @@
   "name": "kontxt-vscode",
   "displayName": "kontxt",
   "description": "AI memory layer — silent context capture and injection across every session",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "4stax",
   "engines": {
     "vscode": "^1.85.0"
@@ -44,6 +44,16 @@
     },
     "commands": [
       {
+        "command": "kontxt.uiRefresh",
+        "title": "kontxt: Reload Sidebar",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "kontxt.update",
+        "title": "kontxt: Update Context",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "kontxt.refresh",
         "title": "kontxt: Refresh Context",
         "icon": "$(refresh)"
@@ -64,12 +74,16 @@
       {
         "command": "kontxt.startDaemon",
         "title": "kontxt: Start Daemon"
+      },
+      {
+        "command": "kontxt.toggleCapturePause",
+        "title": "kontxt: Pause or Resume Capture"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "kontxt.refresh",
+          "command": "kontxt.uiRefresh",
           "when": "view == kontxt.sidebar",
           "group": "navigation"
         },

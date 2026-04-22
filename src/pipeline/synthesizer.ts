@@ -4,6 +4,7 @@ import { getAllActiveEntries, getSynthesis, upsertSynthesis, countActiveEntries 
 const GLOBAL_PROJECT = '__global__'
 import type { Config } from '../config'
 import type { Entry } from '../types'
+import { prepareLlmInput, resolveAnthropicModel, shouldSkipLlmCall } from '../llm/guards'
 
 // Synthesize when there are enough entries to warrant it
 const SYNTHESIS_THRESHOLD = 8
@@ -27,15 +28,18 @@ async function callLlm(
   content: string,
   config: Config
 ): Promise<string | null> {
+  const prepared = prepareLlmInput('synthesis', content)
+  if (shouldSkipLlmCall(prepared.text, 120)) return null
+
   if (config.anthropicKey) {
     try {
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const client = new Anthropic({ apiKey: config.anthropicKey })
       const response = await client.messages.create({
-        model: config.extractionModel ?? 'claude-haiku-4-5-20251001',
-        max_tokens: 400,
+        model: resolveAnthropicModel(config.extractionModel),
+        max_tokens: prepared.maxOutputTokens,
         system: prompt,
-        messages: [{ role: 'user', content }],
+        messages: [{ role: 'user', content: prepared.text }],
       })
       const block = response.content[0]
       return block.type === 'text' ? block.text.trim() : null
@@ -47,10 +51,10 @@ async function callLlm(
       const client = new OpenAI({ apiKey: config.openaiKey })
       const res = await client.chat.completions.create({
         model: 'gpt-4o-mini',
-        max_tokens: 400,
+        max_tokens: prepared.maxOutputTokens,
         messages: [
           { role: 'system', content: prompt },
-          { role: 'user', content },
+          { role: 'user', content: prepared.text },
         ],
       })
       return res.choices[0]?.message?.content?.trim() ?? null

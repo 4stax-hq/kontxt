@@ -32,9 +32,15 @@ export function syncApiKeys(anthropicKey: string, openaiKey: string): void {
   }
   if (anthropicKey) config.anthropicKey = anthropicKey
   if (openaiKey) config.openaiKey = openaiKey
-  // Migrate: Haiku 4.5 is 3x more expensive than Haiku 3 for no extraction quality gain
-  if (!config.extractionModel || config.extractionModel === 'claude-haiku-4-5-20251001') {
-    config.extractionModel = 'claude-3-haiku-20240307'
+  // Keep extraction on the cheaper narrow model path unless the user explicitly changes it.
+  if (
+    !config.extractionModel ||
+    config.extractionModel === 'claude-3-5-haiku-latest' ||
+    config.extractionModel === 'claude-3-haiku-20240307' ||
+    config.extractionModel === 'claude-haiku-4-5-20251001' ||
+    config.extractionModel === 'claude-haiku-4-5'
+  ) {
+    config.extractionModel = 'claude-haiku-4-5'
   }
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
 }
@@ -56,6 +62,13 @@ export function isAutoRefreshEnabled(): boolean {
   } catch { return true }
 }
 
+export function isCapturePaused(): boolean {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
+    return config.capturePaused === true
+  } catch { return false }
+}
+
 export function setAutoRefresh(enabled: boolean): void {
   ensureKontxtDir()
   let config: Record<string, unknown> = {}
@@ -70,11 +83,36 @@ export function getLastAutoRefresh(workspacePath: string): number {
   const stateFile = path.join(os.homedir(), '.kontxt', 'refresh-state.json')
   try {
     const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'))
-    return state.workspaces?.[workspacePath] ?? 0
+    const raw = state.workspaces?.[workspacePath]
+    if (typeof raw === 'number') return raw
+    return raw?.lastFire ?? raw?.lastSuccess ?? 0
   } catch { return 0 }
 }
 
+export interface RefreshStatus {
+  lastAttempt: number
+  lastSuccess: number
+  lastOutcome: string
+  lastError: string
+}
+
+export function getRefreshStatus(workspacePath: string): RefreshStatus | null {
+  const stateFile = path.join(os.homedir(), '.kontxt', 'refresh-state.json')
+  try {
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'))
+    const raw = state.workspaces?.[workspacePath]
+    if (!raw || typeof raw === 'number') return null
+    return {
+      lastAttempt: raw.lastAttempt ?? 0,
+      lastSuccess: raw.lastSuccess ?? 0,
+      lastOutcome: raw.lastOutcome ?? '',
+      lastError: raw.lastError ?? '',
+    }
+  } catch { return null }
+}
+
 export interface KontxtConfig {
+  capturePaused: boolean
   autoRefresh: boolean
   autoRefreshQuietMinutes: number
   autoRefreshCooldownMinutes: number
@@ -85,11 +123,12 @@ export interface KontxtConfig {
 
 export function getFullConfig(): KontxtConfig {
   const defaults: KontxtConfig = {
+    capturePaused: false,
     autoRefresh: true,
     autoRefreshQuietMinutes: 5,
     autoRefreshCooldownMinutes: 30,
     autoRefreshMinScore: 4,
-    extractionModel: 'claude-3-haiku-20240307',
+    extractionModel: 'claude-haiku-4-5',
     maxContextTokens: 800,
   }
   try {
@@ -152,16 +191,18 @@ export function getEntryCount(workspacePath: string): number {
 function resolveKontxtBin(): string {
   // VS Code / Cursor processes often have a stripped PATH — try common locations
   const candidates = [
-    'kontxt',
     '/usr/local/bin/kontxt',
     '/opt/homebrew/bin/kontxt',
+    `${os.homedir()}/.npm-global/bin/kontxt`,
     `${os.homedir()}/.npm-packages/bin/kontxt`,
     `${os.homedir()}/.nvm/current/bin/kontxt`,
+    'kontxt',
   ]
   for (const c of candidates) {
     try {
-      cp.execSync(`${c} --version`, { stdio: 'ignore', timeout: 3000 })
-      return c
+      const resolved = resolveCommandPath(c)
+      cp.execFileSync(resolved, ['--version'], { stdio: 'ignore', timeout: 3000 })
+      return resolved
     } catch {}
   }
   return 'kontxt'  // last resort — let it fail with a useful error
@@ -173,17 +214,144 @@ function getKontxtBin(): string {
   return _kontxtBin
 }
 
+let _cliPreflightOk = false
+
+function resolveNodeBin(): string {
+  const candidates = [
+    '/opt/homebrew/opt/node@20/bin/node',
+    '/usr/local/opt/node@20/bin/node',
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+    process.execPath,
+    'node',
+  ]
+  for (const c of candidates) {
+    try {
+      cp.execFileSync(c, ['-p', 'process.versions.modules'], { stdio: 'ignore', timeout: 3000 })
+      return c
+    } catch {}
+  }
+  return 'node'
+}
+
+export interface CliDiagnostics {
+  extensionVersion: string
+  cliBin: string
+  nodeBin: string
+  nodeVersion: string
+  nodeModulesVersion: string
+  cliPackageRoot: string
+  nativeStatus: 'ok' | 'error' | 'unknown'
+  nativeMessage: string
+}
+
+function isJavaScriptEntrypoint(filePath: string): boolean {
+  const resolved = fs.existsSync(filePath) ? fs.realpathSync(filePath) : filePath
+  return /\.(?:c?js|mjs)$/i.test(resolved)
+}
+
+function normalizeCliError(message: string): string {
+  if (!message.includes('NODE_MODULE_VERSION')) return message
+  return `${message}\n\nkontxt is being launched with a different Node.js runtime than the one used to build better-sqlite3. Rebuild for the active runtime with \`npm rebuild better-sqlite3\`, or run the extension using the same Node version that built kontxt dependencies.`
+}
+
+function getKontxtPackageRoot(bin: string): string | null {
+  try {
+    const resolved = resolveCommandPath(bin)
+    return path.resolve(path.dirname(resolved), '..')
+  } catch {
+    return null
+  }
+}
+
+function resolveCommandPath(command: string): string {
+  if (command.includes(path.sep) || path.isAbsolute(command)) {
+    return fs.realpathSync(command)
+  }
+  const out = cp.execFileSync('which', [command], { encoding: 'utf-8', timeout: 3000 }).trim()
+  if (!out) throw new Error(`Could not resolve command: ${command}`)
+  return fs.realpathSync(out)
+}
+
+export function preflightKontxtCli(): string | null {
+  if (_cliPreflightOk) return null
+
+  const bin = resolveCommandPath(getKontxtBin())
+  const nodeBin = resolveNodeBin()
+  const packageRoot = getKontxtPackageRoot(bin)
+  if (!packageRoot) return null
+
+  try {
+    cp.execFileSync(nodeBin, ['-e', `require(${JSON.stringify(path.join(packageRoot, 'node_modules', 'better-sqlite3'))})`], {
+      stdio: 'ignore',
+      timeout: 5000,
+    })
+    _cliPreflightOk = true
+    return null
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return normalizeCliError(message)
+  }
+}
+
+export function getCliDiagnostics(extensionVersion: string): CliDiagnostics {
+  const cliBin = resolveCommandPath(getKontxtBin())
+  const nodeBin = resolveNodeBin()
+  const cliPackageRoot = getKontxtPackageRoot(cliBin) ?? ''
+  let nodeVersion = ''
+  let nodeModulesVersion = ''
+  let nativeStatus: CliDiagnostics['nativeStatus'] = 'unknown'
+  let nativeMessage = ''
+
+  try {
+    nodeVersion = cp.execFileSync(nodeBin, ['-p', 'process.versions.node'], { encoding: 'utf-8', timeout: 3000 }).trim()
+  } catch {}
+  try {
+    nodeModulesVersion = cp.execFileSync(nodeBin, ['-p', 'process.versions.modules'], { encoding: 'utf-8', timeout: 3000 }).trim()
+  } catch {}
+
+  const preflightError = preflightKontxtCli()
+  if (preflightError) {
+    nativeStatus = 'error'
+    nativeMessage = preflightError
+  } else if (cliPackageRoot) {
+    nativeStatus = 'ok'
+    nativeMessage = 'better-sqlite3 loaded successfully'
+  }
+
+  return {
+    extensionVersion,
+    cliBin,
+    nodeBin,
+    nodeVersion,
+    nodeModulesVersion,
+    cliPackageRoot,
+    nativeStatus,
+    nativeMessage,
+  }
+}
+
 export function runKontxtCli(args: string[], workspacePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const bin = getKontxtBin()
+    const preflightError = preflightKontxtCli()
+    if (preflightError) {
+      reject(new Error(preflightError))
+      return
+    }
+    const bin = resolveCommandPath(getKontxtBin())
+    const nodeBin = resolveNodeBin()
+    const command = isJavaScriptEntrypoint(bin) ? nodeBin : bin
+    const commandArgs = isJavaScriptEntrypoint(bin) ? [fs.realpathSync(bin), ...args] : args
     // Augment PATH so child process can find node/npm bins
     const augmentedPath = [
       '/usr/local/bin', '/opt/homebrew/bin',
+      '/usr/local/opt/node@20/bin', '/opt/homebrew/opt/node@20/bin',
+      `${os.homedir()}/.npm-global/bin`,
       `${os.homedir()}/.npm-packages/bin`,
       process.env.PATH ?? '',
     ].join(':')
 
-    const proc = cp.spawn(bin, args, {
+    const proc = cp.spawn(command, commandArgs, {
       cwd: workspacePath,
       env: { ...process.env, PATH: augmentedPath },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -194,17 +362,32 @@ export function runKontxtCli(args: string[], workspacePath: string): Promise<str
     proc.stderr?.on('data', (d: Buffer) => { err += d.toString() })
     proc.on('close', (code) => {
       if (code === 0) resolve(out)
-      else reject(new Error(err || out || `exit code ${code}`))
+      else reject(new Error(normalizeCliError(err || out || `exit code ${code}`)))
     })
     proc.on('error', (e) => reject(new Error(`Could not run kontxt: ${e.message}. Ensure it is installed: npm i -g @4stax/kontxt`))    )
   })
 }
 
 export function startDaemonDetached(workspacePath: string): void {
-  const proc = cp.spawn('kontxt', ['start', '--workspace', workspacePath], {
+  const bin = resolveCommandPath(getKontxtBin())
+  const nodeBin = resolveNodeBin()
+  const command = isJavaScriptEntrypoint(bin) ? nodeBin : bin
+  const commandArgs = isJavaScriptEntrypoint(bin)
+    ? [fs.realpathSync(bin), 'start', '--workspace', workspacePath]
+    : ['start', '--workspace', workspacePath]
+  const proc = cp.spawn(command, commandArgs, {
     detached: true,
     stdio: 'ignore',
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      PATH: [
+        '/usr/local/bin', '/opt/homebrew/bin',
+        '/usr/local/opt/node@20/bin', '/opt/homebrew/opt/node@20/bin',
+        `${os.homedir()}/.npm-global/bin`,
+        `${os.homedir()}/.npm-packages/bin`,
+        process.env.PATH ?? '',
+      ].join(':'),
+    },
   })
   proc.unref()
 }

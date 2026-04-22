@@ -1,7 +1,6 @@
 import type { ExtractedItem } from '../types'
 import { MIN_CONFIDENCE } from '../constants'
-
-const MAX_INPUT_CHARS = 10000
+import { prepareLlmInput, resolveAnthropicModel, shouldSkipLlmCall } from '../llm/guards'
 
 const SYSTEM_PROMPT = `You extract durable knowledge from conversations that will help an AI assistant understand a person's situation, goals, and context in future sessions.
 
@@ -66,15 +65,6 @@ Return ONLY a JSON array — no markdown, no preamble, no explanation:
 Confidence reflects how specific and durable this knowledge is. Omit items below 0.7.
 If nothing durable exists, return [].`
 
-function smartTruncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text
-  // Keep the first 30% (establishes what the conversation is about)
-  // and the last 70% (where decisions and conclusions land)
-  const head = Math.floor(maxChars * 0.3)
-  const tail = maxChars - head
-  return text.slice(0, head) + '\n\n[...]\n\n' + text.slice(-tail)
-}
-
 function parseResponse(raw: string): ExtractedItem[] {
   const cleaned = raw.trim()
     .replace(/^```json\s*/i, '')
@@ -113,15 +103,17 @@ export async function extractFromText(
   text: string,
   config: { anthropicKey?: string; openaiKey?: string; extractionModel?: string }
 ): Promise<ExtractedItem[]> {
-  const input = smartTruncate(text, MAX_INPUT_CHARS)
+  const prepared = prepareLlmInput('extract', text)
+  if (shouldSkipLlmCall(prepared.text)) return []
+  const input = prepared.text
 
   if (config.anthropicKey) {
     try {
       const Anthropic = (await import('@anthropic-ai/sdk')).default
       const client = new Anthropic({ apiKey: config.anthropicKey })
       const response = await client.messages.create({
-        model: config.extractionModel ?? 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
+        model: resolveAnthropicModel(config.extractionModel),
+        max_tokens: prepared.maxOutputTokens,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: input }],
       })
@@ -143,7 +135,7 @@ export async function extractFromText(
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: input },
         ],
-        max_tokens: 1024,
+        max_tokens: prepared.maxOutputTokens,
       })
       return parseResponse(response.choices[0]?.message?.content ?? '')
     } catch (err) {
