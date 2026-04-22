@@ -83,6 +83,24 @@ program
   })
 
 program
+  .command('refresh')
+  .description('Extract knowledge from recently modified files (1 API call, run after agent sessions)')
+  .option('-w, --workspace <path>', 'Workspace path (defaults to cwd)')
+  .option('--hours <n>', 'Look back N hours for modified files (default: 24)', '24')
+  .action(async (opts) => {
+    const { refreshCommand } = require('./commands/refresh') as typeof import('./commands/refresh')
+    const workspacePath = opts.workspace ?? process.cwd()
+    console.log(`Scanning for changes in the last ${opts.hours}h...`)
+    const stored = await refreshCommand(workspacePath)
+    if (stored > 0) {
+      console.log(`\nRefreshed: ${stored} new entries`)
+      console.log(`Context file: ${workspacePath}/.kontxt/CONTEXT.md`)
+    } else {
+      console.log('No new knowledge found in recently modified files.')
+    }
+  })
+
+program
   .command('mcp-server')
   .description('Start the MCP server on stdio (for Cursor/Claude Desktop config)')
   .action(async () => {

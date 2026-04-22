@@ -9,13 +9,12 @@ import {
   hasProjectContext,
   runKontxtCli,
   readContextMd,
-  parseContextMd,
   ensureGitignore,
 } from './kontxt-client'
 
 let sidebarProvider: KontxtSidebarProvider
 let fileWatcher: vscode.FileSystemWatcher | undefined
-let refreshInterval: ReturnType<typeof setInterval> | undefined
+let pollInterval: ReturnType<typeof setInterval> | undefined
 
 export function activate(context: vscode.ExtensionContext) {
   sidebarProvider = new KontxtSidebarProvider(context.extensionUri)
@@ -29,12 +28,10 @@ export function activate(context: vscode.ExtensionContext) {
   registerCommands(context)
   setupWorkspace(context)
 
-  // Re-run setup when workspace folders change
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => setupWorkspace(context))
   )
 
-  // Sync keys when VS Code settings change
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('kontxt')) {
@@ -51,8 +48,6 @@ function getWorkspacePath(): string | undefined {
 
 async function setupWorkspace(context: vscode.ExtensionContext) {
   const workspacePath = getWorkspacePath()
-
-  // Always sync keys from VS Code settings first
   syncKeysFromSettings()
 
   if (workspacePath) {
@@ -60,25 +55,19 @@ async function setupWorkspace(context: vscode.ExtensionContext) {
     ensureGitignore(workspacePath)
   }
 
-  // Start daemon if configured
   const cfg = vscode.workspace.getConfiguration('kontxt')
-  if (cfg.get<boolean>('autoStartDaemon', true) && !isDaemonRunning()) {
-    if (workspacePath) {
-      startDaemonDetached(workspacePath)
-      // Give it a moment then refresh
-      setTimeout(() => sidebarProvider.refresh(), 1500)
-    }
+  if (cfg.get<boolean>('autoStartDaemon', true) && !isDaemonRunning() && workspacePath) {
+    startDaemonDetached(workspacePath)
+    setTimeout(() => sidebarProvider.refresh(), 1500)
   }
 
   if (!hasApiKey()) {
-    // Show setup prompt once per install
     const shown = context.globalState.get<boolean>('setupPromptShown')
     if (!shown) {
       context.globalState.update('setupPromptShown', true)
       const choice = await vscode.window.showInformationMessage(
-        'kontxt needs an Anthropic API key to start capturing AI context.',
-        'Open Settings',
-        'Later'
+        'kontxt needs an Anthropic API key to capture context.',
+        'Open Settings', 'Later'
       )
       if (choice === 'Open Settings') {
         vscode.commands.executeCommand('workbench.action.openSettings', 'kontxt.anthropicKey')
@@ -87,19 +76,13 @@ async function setupWorkspace(context: vscode.ExtensionContext) {
     return
   }
 
-  if (!workspacePath) {
-    sidebarProvider.refresh()
-    return
-  }
+  if (!workspacePath) { sidebarProvider.refresh(); return }
 
-  // Auto-init if no context exists yet
-  const autoInit = cfg.get<boolean>('autoInit', true)
-  if (autoInit && !hasProjectContext(workspacePath)) {
+  if (cfg.get<boolean>('autoInit', true) && !hasProjectContext(workspacePath)) {
     const name = path.basename(workspacePath)
     const choice = await vscode.window.showInformationMessage(
-      `kontxt: No context found for "${name}". Initialize it now?`,
-      'Initialize',
-      'Not now'
+      `kontxt: No context found for "${name}". Initialize now?`,
+      'Initialize', 'Not now'
     )
     if (choice === 'Initialize') {
       vscode.commands.executeCommand('kontxt.init')
@@ -109,7 +92,7 @@ async function setupWorkspace(context: vscode.ExtensionContext) {
 
   sidebarProvider.refresh()
   setupFileWatcher(workspacePath)
-  setupRefreshInterval()
+  setupPollInterval()
 }
 
 function setupFileWatcher(workspacePath: string) {
@@ -120,40 +103,36 @@ function setupFileWatcher(workspacePath: string) {
   fileWatcher.onDidCreate(() => sidebarProvider.refresh())
 }
 
-function setupRefreshInterval() {
-  if (refreshInterval) clearInterval(refreshInterval)
-  // Poll every 30s to catch daemon writes
-  refreshInterval = setInterval(() => sidebarProvider.refresh(), 30000)
+function setupPollInterval() {
+  if (pollInterval) clearInterval(pollInterval)
+  pollInterval = setInterval(() => sidebarProvider.refresh(), 30000)
 }
 
 function syncKeysFromSettings() {
   const cfg = vscode.workspace.getConfiguration('kontxt')
   const anthropicKey = cfg.get<string>('anthropicKey', '')
   const openaiKey = cfg.get<string>('openaiKey', '')
-  if (anthropicKey || openaiKey) {
-    syncApiKeys(anthropicKey, openaiKey)
-  }
+  if (anthropicKey || openaiKey) syncApiKeys(anthropicKey, openaiKey)
+}
+
+function requireApiKey(): boolean {
+  if (hasApiKey()) return true
+  vscode.window.showErrorMessage('kontxt: Set an Anthropic API key in Settings → kontxt')
+  return false
 }
 
 function registerCommands(context: vscode.ExtensionContext) {
+  // UI-only reload (does not call the CLI)
   context.subscriptions.push(
-    vscode.commands.registerCommand('kontxt.refresh', () => {
-      sidebarProvider.refresh()
-    })
+    vscode.commands.registerCommand('kontxt.uiRefresh', () => sidebarProvider.refresh())
   )
 
   context.subscriptions.push(
     vscode.commands.registerCommand('kontxt.startDaemon', () => {
-      const workspacePath = getWorkspacePath()
-      if (!workspacePath) {
-        vscode.window.showErrorMessage('kontxt: No workspace open')
-        return
-      }
-      if (isDaemonRunning()) {
-        vscode.window.showInformationMessage('kontxt: Daemon is already running')
-        return
-      }
-      startDaemonDetached(workspacePath)
+      const wp = getWorkspacePath()
+      if (!wp) { vscode.window.showErrorMessage('kontxt: No workspace open'); return }
+      if (isDaemonRunning()) { vscode.window.showInformationMessage('kontxt: Daemon already running'); return }
+      startDaemonDetached(wp)
       vscode.window.setStatusBarMessage('kontxt: Daemon started', 3000)
       setTimeout(() => sidebarProvider.refresh(), 1500)
     })
@@ -161,32 +140,18 @@ function registerCommands(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('kontxt.init', async () => {
-      const workspacePath = getWorkspacePath()
-      if (!workspacePath) {
-        vscode.window.showErrorMessage('kontxt: No workspace open')
-        return
-      }
-      if (!hasApiKey()) {
-        vscode.window.showErrorMessage('kontxt: Set an Anthropic API key first in VS Code Settings → kontxt')
-        return
-      }
-
+      const wp = getWorkspacePath()
+      if (!wp || !requireApiKey()) return
       await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: 'kontxt: Analyzing repository...',
-          cancellable: false,
-        },
+        { location: vscode.ProgressLocation.Notification, title: 'kontxt: Analyzing repository...', cancellable: false },
         async () => {
           try {
-            const output = await runKontxtCli(['init', '--workspace', workspacePath], workspacePath)
-            ensureGitignore(workspacePath)
-            const lines = output.split('\n').filter(l => l.startsWith('  ['))
-            vscode.window.showInformationMessage(
-              `kontxt: Initialized with ${lines.length} entries`
-            )
+            const output = await runKontxtCli(['init', '--workspace', wp], wp)
+            ensureGitignore(wp)
+            const count = output.split('\n').filter(l => l.startsWith('  [')).length
+            vscode.window.showInformationMessage(`kontxt: Initialized with ${count} entries`)
             sidebarProvider.refresh()
-            setupFileWatcher(workspacePath)
+            setupFileWatcher(wp)
           } catch (err) {
             vscode.window.showErrorMessage(`kontxt init failed: ${err}`)
           }
@@ -195,30 +160,67 @@ function registerCommands(context: vscode.ExtensionContext) {
     })
   )
 
+  // CLI refresh — scans recently changed files, one API call
+  context.subscriptions.push(
+    vscode.commands.registerCommand('kontxt.refresh', async () => {
+      const wp = getWorkspacePath()
+      if (!wp || !requireApiKey()) return
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'kontxt: Scanning recent changes...', cancellable: false },
+        async () => {
+          try {
+            const output = await runKontxtCli(['refresh', '--workspace', wp], wp)
+            const count = output.split('\n').filter(l => l.startsWith('  [')).length
+            if (count > 0) {
+              vscode.window.showInformationMessage(`kontxt: +${count} new entries from recent changes`)
+            } else {
+              vscode.window.setStatusBarMessage('kontxt: No new knowledge in recent changes', 4000)
+            }
+            sidebarProvider.refresh()
+          } catch (err) {
+            vscode.window.showErrorMessage(`kontxt refresh failed: ${err}`)
+          }
+        }
+      )
+    })
+  )
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('kontxt.synthesize', async () => {
+      const wp = getWorkspacePath()
+      if (!wp || !requireApiKey()) return
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'kontxt: Synthesizing...', cancellable: false },
+        async () => {
+          try {
+            await runKontxtCli(['synthesize', '--workspace', wp], wp)
+            sidebarProvider.refresh()
+            vscode.window.setStatusBarMessage('kontxt: Synthesis complete', 3000)
+          } catch (err) {
+            vscode.window.showErrorMessage(`kontxt synthesize failed: ${err}`)
+          }
+        }
+      )
+    })
+  )
+
   context.subscriptions.push(
     vscode.commands.registerCommand('kontxt.addNote', async () => {
-      const workspacePath = getWorkspacePath()
-      if (!workspacePath) return
-
+      const wp = getWorkspacePath()
+      if (!wp) return
       const typeChoice = await vscode.window.showQuickPick(
         ['fact', 'decision', 'blocker', 'progress', 'focus'],
         { placeHolder: 'Entry type' }
       )
       if (!typeChoice) return
-
       const text = await vscode.window.showInputBox({
         prompt: `Add ${typeChoice}`,
-        placeHolder: typeChoice === 'decision'
-          ? 'What was decided and why?'
-          : typeChoice === 'blocker'
-          ? 'What is blocked and why?'
-          : 'Be specific...',
-        validateInput: v => v.trim().length < 10 ? 'Too short — be specific' : null,
+        placeHolder: typeChoice === 'decision' ? 'What was decided and why?' : 'Be specific...',
+        validateInput: v => v.trim().length < 10 ? 'Too short' : null,
       })
       if (!text) return
-
       try {
-        await runKontxtCli(['note', text, '--type', typeChoice, '--workspace', workspacePath], workspacePath)
+        await runKontxtCli(['note', text, '--type', typeChoice, '--workspace', wp], wp)
         vscode.window.setStatusBarMessage(`kontxt: recorded [${typeChoice}]`, 3000)
         sidebarProvider.refresh()
       } catch (err) {
@@ -229,20 +231,17 @@ function registerCommands(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('kontxt.copyContext', async () => {
-      const workspacePath = getWorkspacePath()
-      if (!workspacePath) return
-      const md = readContextMd(workspacePath)
-      if (!md) {
-        vscode.window.showWarningMessage('kontxt: No context found — run kontxt init first')
-        return
-      }
+      const wp = getWorkspacePath()
+      if (!wp) return
+      const md = readContextMd(wp)
+      if (!md) { vscode.window.showWarningMessage('kontxt: No context yet — run init first'); return }
       await vscode.env.clipboard.writeText(md)
-      vscode.window.setStatusBarMessage('kontxt: Context copied to clipboard', 3000)
+      vscode.window.setStatusBarMessage('kontxt: Context copied', 3000)
     })
   )
 }
 
 export function deactivate() {
   fileWatcher?.dispose()
-  if (refreshInterval) clearInterval(refreshInterval)
+  if (pollInterval) clearInterval(pollInterval)
 }

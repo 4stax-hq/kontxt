@@ -10,6 +10,11 @@ export interface Config {
   daemonPort?: number
   autoInjectOnOpen?: boolean
   maxContextTokens?: number
+  // Auto-refresh controls
+  autoRefresh?: boolean            // watch for file changes and extract automatically
+  autoRefreshQuietMinutes?: number // minutes of no changes before firing (default 5)
+  autoRefreshCooldownMinutes?: number // min minutes between auto calls (default 30)
+  autoRefreshMinScore?: number     // min significance score to trigger (default 4)
 }
 
 const DEFAULTS: Required<Config> = {
@@ -20,6 +25,10 @@ const DEFAULTS: Required<Config> = {
   daemonPort: DAEMON_PORT,
   autoInjectOnOpen: true,
   maxContextTokens: MAX_CONTEXT_TOKENS,
+  autoRefresh: true,
+  autoRefreshQuietMinutes: 5,
+  autoRefreshCooldownMinutes: 30,
+  autoRefreshMinScore: 4,
 }
 
 export function loadConfig(): Config {
@@ -51,14 +60,20 @@ export function setConfigKey(key: string, value: string): void {
     'daemon-port': 'daemonPort',
     'auto-inject': 'autoInjectOnOpen',
     'max-tokens': 'maxContextTokens',
+    'auto-refresh': 'autoRefresh',
+    'auto-refresh-quiet-minutes': 'autoRefreshQuietMinutes',
+    'auto-refresh-cooldown-minutes': 'autoRefreshCooldownMinutes',
+    'auto-refresh-min-score': 'autoRefreshMinScore',
   }
   const configKey = keyMap[key]
   if (!configKey) {
     throw new Error(`Unknown config key: ${key}. Valid keys: ${Object.keys(keyMap).join(', ')}`)
   }
-  if (configKey === 'daemonPort' || configKey === 'maxContextTokens') {
+  const numKeys = new Set<keyof Config>(['daemonPort', 'maxContextTokens', 'autoRefreshQuietMinutes', 'autoRefreshCooldownMinutes', 'autoRefreshMinScore'])
+  const boolKeys = new Set<keyof Config>(['autoInjectOnOpen', 'autoRefresh'])
+  if (numKeys.has(configKey)) {
     ;(config as Record<string, unknown>)[configKey] = parseInt(value, 10)
-  } else if (configKey === 'autoInjectOnOpen') {
+  } else if (boolKeys.has(configKey)) {
     ;(config as Record<string, unknown>)[configKey] = value === 'true'
   } else {
     ;(config as Record<string, unknown>)[configKey] = value

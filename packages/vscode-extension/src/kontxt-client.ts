@@ -32,9 +32,9 @@ export function syncApiKeys(anthropicKey: string, openaiKey: string): void {
   }
   if (anthropicKey) config.anthropicKey = anthropicKey
   if (openaiKey) config.openaiKey = openaiKey
-  // Always ensure model is current
-  if (!config.extractionModel || config.extractionModel === 'claude-3-haiku-20240307') {
-    config.extractionModel = 'claude-haiku-4-5-20251001'
+  // Migrate: Haiku 4.5 is 3x more expensive than Haiku 3 for no extraction quality gain
+  if (!config.extractionModel || config.extractionModel === 'claude-haiku-4-5-20251001') {
+    config.extractionModel = 'claude-3-haiku-20240307'
   }
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
 }
@@ -47,6 +47,65 @@ export function hasApiKey(): boolean {
   } catch {
     return false
   }
+}
+
+export function isAutoRefreshEnabled(): boolean {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
+    return config.autoRefresh !== false   // default on
+  } catch { return true }
+}
+
+export function setAutoRefresh(enabled: boolean): void {
+  ensureKontxtDir()
+  let config: Record<string, unknown> = {}
+  if (fs.existsSync(CONFIG_PATH)) {
+    try { config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) } catch {}
+  }
+  config.autoRefresh = enabled
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
+}
+
+export function getLastAutoRefresh(workspacePath: string): number {
+  const stateFile = path.join(os.homedir(), '.kontxt', 'refresh-state.json')
+  try {
+    const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'))
+    return state.workspaces?.[workspacePath] ?? 0
+  } catch { return 0 }
+}
+
+export interface KontxtConfig {
+  autoRefresh: boolean
+  autoRefreshQuietMinutes: number
+  autoRefreshCooldownMinutes: number
+  autoRefreshMinScore: number
+  extractionModel: string
+  maxContextTokens: number
+}
+
+export function getFullConfig(): KontxtConfig {
+  const defaults: KontxtConfig = {
+    autoRefresh: true,
+    autoRefreshQuietMinutes: 5,
+    autoRefreshCooldownMinutes: 30,
+    autoRefreshMinScore: 4,
+    extractionModel: 'claude-3-haiku-20240307',
+    maxContextTokens: 800,
+  }
+  try {
+    const raw = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'))
+    return { ...defaults, ...raw }
+  } catch { return defaults }
+}
+
+export function setConfigValue(key: string, value: unknown): void {
+  ensureKontxtDir()
+  let config: Record<string, unknown> = {}
+  if (fs.existsSync(CONFIG_PATH)) {
+    try { config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8')) } catch {}
+  }
+  config[key] = value
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2))
 }
 
 const GITIGNORE_BLOCK = `
@@ -90,11 +149,43 @@ export function getEntryCount(workspacePath: string): number {
   }
 }
 
+function resolveKontxtBin(): string {
+  // VS Code / Cursor processes often have a stripped PATH — try common locations
+  const candidates = [
+    'kontxt',
+    '/usr/local/bin/kontxt',
+    '/opt/homebrew/bin/kontxt',
+    `${os.homedir()}/.npm-packages/bin/kontxt`,
+    `${os.homedir()}/.nvm/current/bin/kontxt`,
+  ]
+  for (const c of candidates) {
+    try {
+      cp.execSync(`${c} --version`, { stdio: 'ignore', timeout: 3000 })
+      return c
+    } catch {}
+  }
+  return 'kontxt'  // last resort — let it fail with a useful error
+}
+
+let _kontxtBin: string | null = null
+function getKontxtBin(): string {
+  if (!_kontxtBin) _kontxtBin = resolveKontxtBin()
+  return _kontxtBin
+}
+
 export function runKontxtCli(args: string[], workspacePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = cp.spawn('kontxt', args, {
+    const bin = getKontxtBin()
+    // Augment PATH so child process can find node/npm bins
+    const augmentedPath = [
+      '/usr/local/bin', '/opt/homebrew/bin',
+      `${os.homedir()}/.npm-packages/bin`,
+      process.env.PATH ?? '',
+    ].join(':')
+
+    const proc = cp.spawn(bin, args, {
       cwd: workspacePath,
-      env: { ...process.env },
+      env: { ...process.env, PATH: augmentedPath },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let out = ''
@@ -105,7 +196,7 @@ export function runKontxtCli(args: string[], workspacePath: string): Promise<str
       if (code === 0) resolve(out)
       else reject(new Error(err || out || `exit code ${code}`))
     })
-    proc.on('error', reject)
+    proc.on('error', (e) => reject(new Error(`Could not run kontxt: ${e.message}. Ensure it is installed: npm i -g @4stax/kontxt`))    )
   })
 }
 

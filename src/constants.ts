@@ -9,7 +9,7 @@ export const PID_PATH = path.join(KONTXT_DIR, 'daemon.pid')
 
 export const DAEMON_PORT = 7842
 
-export const EXTRACTION_MODEL_ANTHROPIC = 'claude-haiku-4-5-20251001'
+export const EXTRACTION_MODEL_ANTHROPIC = 'claude-3-haiku-20240307'
 export const EXTRACTION_MODEL_OPENAI = 'gpt-4o-mini'
 export const EMBEDDING_MODEL = 'text-embedding-3-small'
 export const EMBEDDING_DIM = 1536

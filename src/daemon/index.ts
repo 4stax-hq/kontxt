@@ -10,6 +10,7 @@ import { createHttpServer } from '../http/server'
 import { SOCKET_PATH, PID_PATH, KONTXT_DIR } from '../constants'
 import type { DaemonEvent, RawEvent } from '../types'
 import { watchAgentFiles } from './agent-watcher'
+import { watchWorkspace } from './workspace-watcher'
 
 interface QueueItem {
   event: RawEvent
@@ -21,6 +22,8 @@ let processing = false
 
 // Agent file watchers per workspace — cleaned up on session_end / shutdown
 const agentWatchers = new Map<string, () => void>()
+// Workspace source file watchers — fire one LLM call per quiet period
+const workspaceWatchers = new Map<string, () => void>()
 
 async function drainQueue(db: ReturnType<typeof getDb>, config: ReturnType<typeof loadConfig>): Promise<void> {
   if (processing || queue.length === 0) return
@@ -35,6 +38,48 @@ async function drainQueue(db: ReturnType<typeof getDb>, config: ReturnType<typeo
     }
   }
   processing = false
+}
+
+function startWorkspaceWatchers(
+  wp: string,
+  db: ReturnType<typeof getDb>,
+  config: ReturnType<typeof loadConfig>
+): void {
+  if (!wp) return
+
+  if (!agentWatchers.has(wp)) {
+    try {
+      const stop = watchAgentFiles(wp, (change) => {
+        const sessionId = getActiveSessionId(wp)
+        const event: RawEvent = {
+          text: change.content,
+          source: 'agent-file',
+          workspacePath: change.workspacePath,
+          timestamp: new Date().toISOString(),
+        }
+        queue.push({ event, sessionId })
+        console.log(`[daemon] agent file changed: ${change.filePath} (${change.agent})`)
+      })
+      agentWatchers.set(wp, stop)
+      console.log(`[daemon] watching agent files in ${wp}`)
+    } catch {}
+  }
+
+  if (!workspaceWatchers.has(wp)) {
+    try {
+      const stop = watchWorkspace(wp, () => loadConfig(), async ({ changedFiles }) => {
+        if (changedFiles.length === 0) return
+        console.log(`[daemon] workspace batch: ${changedFiles.length} files changed in ${wp}`)
+
+        // One API call for the whole batch
+        const { refreshCommand } = await import('../cli/commands/refresh')
+        const stored = await refreshCommand(wp, changedFiles)
+        console.log(`[daemon] workspace refresh: +${stored} new entries`)
+      })
+      workspaceWatchers.set(wp, stop)
+      console.log(`[daemon] watching workspace source files in ${wp}`)
+    } catch {}
+  }
 }
 
 export async function startDaemon(): Promise<void> {
@@ -84,23 +129,7 @@ export async function startDaemon(): Promise<void> {
   ).all() as Array<{ workspace_path: string }>
 
   for (const { workspace_path: wp } of knownProjects) {
-    if (!agentWatchers.has(wp)) {
-      try {
-        const stop = watchAgentFiles(wp, (change) => {
-          const sessionId = getActiveSessionId(wp)
-          const event: RawEvent = {
-            text: change.content,
-            source: 'agent-file',
-            workspacePath: change.workspacePath,
-            timestamp: new Date().toISOString(),
-          }
-          queue.push({ event, sessionId })
-          console.log(`[daemon] agent file changed: ${change.filePath} (${change.agent})`)
-        })
-        agentWatchers.set(wp, stop)
-        console.log(`[daemon] watching agent files in ${wp}`)
-      } catch {}
-    }
+    startWorkspaceWatchers(wp, db, config)
   }
 
   eventBus.onEvent(async (daemonEvent: DaemonEvent) => {
@@ -114,31 +143,16 @@ export async function startDaemon(): Promise<void> {
       const project = payload.projectName ?? path.basename(payload.workspacePath) ?? 'default'
       startSession(db, project, payload.workspacePath)
 
-      // Start watching agent files for this workspace (if not already watching)
-      if (payload.workspacePath && !agentWatchers.has(payload.workspacePath)) {
-        const stop = watchAgentFiles(payload.workspacePath, (change) => {
-          const sessionId = getActiveSessionId(payload.workspacePath)
-          const event: RawEvent = {
-            text: change.content,
-            source: 'agent-file',
-            workspacePath: change.workspacePath,
-            timestamp: new Date().toISOString(),
-          }
-          queue.push({ event, sessionId })
-          console.log(`[daemon] agent file changed: ${change.filePath} (${change.agent})`)
-        })
-        agentWatchers.set(payload.workspacePath, stop)
+      // Start watching agent files + workspace source files
+      if (payload.workspacePath) {
+        startWorkspaceWatchers(payload.workspacePath, db, config)
       }
     } else if (daemonEvent.type === 'session_end') {
       const payload = daemonEvent.payload as { workspacePath?: string; projectName?: string }
       const workspaceKey = payload.workspacePath ?? payload.projectName ?? 'default'
       await endSession(db, workspaceKey, config)
 
-      // Stop watching agent files for this workspace
-      if (payload.workspacePath) {
-        const stop = agentWatchers.get(payload.workspacePath)
-        if (stop) { stop(); agentWatchers.delete(payload.workspacePath) }
-      }
+      // Keep watchers alive across session boundaries — workspace may still be active
     } else if (daemonEvent.type === 'shutdown') {
       await shutdown(db, config, socketServer, httpServer)
     }
@@ -183,6 +197,8 @@ async function shutdown(
 
   for (const stop of agentWatchers.values()) { try { stop() } catch {} }
   agentWatchers.clear()
+  for (const stop of workspaceWatchers.values()) { try { stop() } catch {} }
+  workspaceWatchers.clear()
 
   socketServer.close()
   httpServer.close()

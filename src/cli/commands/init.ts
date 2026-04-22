@@ -222,18 +222,18 @@ function buildRepoSummary(workspacePath: string): string {
     .filter(({ score }) => score >= 0)
     .sort((a, b) => b.score - a.score)
 
-  // Take top files, budget 12000 chars for code content
+  // Take top files, budget 7500 chars for code content
   // Use smart truncation: first 30% + last 70% to capture both imports AND implementations
   let codeCharsUsed = 0
-  const CODE_BUDGET = 12000
-  const MAX_FILES = 12
+  const CODE_BUDGET = 7500
+  const MAX_FILES = 10
   const picked: Array<{ rel: string; content: string }> = []
 
   for (const { f } of scored) {
     if (picked.length >= MAX_FILES || codeCharsUsed >= CODE_BUDGET) break
     const rel = path.relative(workspacePath, f)
     const remaining = CODE_BUDGET - codeCharsUsed
-    const perFileCap = Math.min(1800, remaining)
+    const perFileCap = Math.min(1200, remaining)
     try {
       let content = fs.readFileSync(f, 'utf-8')
       if (content.length > perFileCap) {
@@ -255,7 +255,7 @@ function buildRepoSummary(workspacePath: string): string {
   }
 
   const full = parts.join('\n\n')
-  return full.length > 16000 ? full.slice(0, 16000) + '\n...' : full
+  return full.length > 11000 ? full.slice(0, 11000) + '\n...' : full
 }
 
 // ─── LLM extraction ───────────────────────────────────────────────────────────
